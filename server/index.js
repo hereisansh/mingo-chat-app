@@ -439,15 +439,17 @@ app.post("/stories", requireAuth, asyncRoute(async (req, res) => {
   const story = await Story.create({ userId: req.user._id, shareWith, text, musicUrl, theme, expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) });
   res.status(201).json({ success: true, data: await story.populate("userId", "fullName avatar") });
 }));
+const studyProvider = () => (process.env.STUDY_AI_PROVIDER || "gemini").trim().toLowerCase() === "openai" ? "openai" : "gemini";
+const studyProviderKey = () => studyProvider() === "gemini" ? process.env.GEMINI_API_KEY : process.env.OPENAI_API_KEY;
 const memoryEmbedding = async (text) => {
-  if (!process.env.OPENAI_API_KEY) return null;
+  if (studyProvider() !== "openai" || !process.env.OPENAI_API_KEY) return null;
   const response = await fetch("https://api.openai.com/v1/embeddings", { method: "POST", headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: process.env.MEMORY_EMBEDDING_MODEL || "text-embedding-3-small", input: text.slice(0, 5000) }) });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error?.message || "Could not create a memory embedding.");
   return payload.data?.[0]?.embedding || null;
 };
 const memoryEmbeddings = async (texts) => {
-  if (!process.env.OPENAI_API_KEY || !texts.length) return [];
+  if (studyProvider() !== "openai" || !process.env.OPENAI_API_KEY || !texts.length) return [];
   const response = await fetch("https://api.openai.com/v1/embeddings", { method: "POST", headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: process.env.MEMORY_EMBEDDING_MODEL || "text-embedding-3-small", input: texts.map((text) => text.slice(0, 5000)) }) });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error?.message || "Could not create memory embeddings.");
@@ -466,7 +468,7 @@ const memorySources = async (userId) => {
   const indexedNotes = new Map(saved.filter((item) => item.sourceType === "note").map((item) => [item.sourceId, item]));
   return [...notes.map((note) => { const indexed = indexedNotes.get(String(note._id)); return { sourceId: String(note._id), sourceType: "note", title: note.title, text: note.text, embedding: indexed?.embedding, createdAt: note.createdAt }; }), ...saved.filter((item) => item.sourceType !== "note").map((item) => ({ sourceId: item.sourceId, sourceType: item.sourceType, title: item.title || "Saved chat memory", text: item.text, embedding: item.embedding, createdAt: item.createdAt }))];
 };
-app.get("/memory/settings", requireAuth, (req, res) => res.json({ success: true, data: { enabled: Boolean(req.user.memoryEnabled), aiAvailable: Boolean(process.env.OPENAI_API_KEY) } }));
+app.get("/memory/settings", requireAuth, (req, res) => res.json({ success: true, data: { enabled: Boolean(req.user.memoryEnabled), aiAvailable: Boolean(studyProviderKey()), provider: studyProvider(), semanticAvailable: studyProvider() === "openai" && Boolean(process.env.OPENAI_API_KEY) } }));
 app.patch("/memory/settings", requireAuth, asyncRoute(async (req, res) => {
   if (typeof req.body.enabled !== "boolean") return fail(res, 400, "Choose whether Mingo Memory is on or off.");
   req.user.memoryEnabled = req.body.enabled; await req.user.save();
@@ -479,7 +481,7 @@ app.patch("/memory/settings", requireAuth, asyncRoute(async (req, res) => {
       }
     } catch (error) { console.error("Existing note embedding failed", error.message); }
   }
-  res.json({ success: true, data: { enabled: req.user.memoryEnabled, aiAvailable: Boolean(process.env.OPENAI_API_KEY) } });
+  res.json({ success: true, data: { enabled: req.user.memoryEnabled, aiAvailable: Boolean(studyProviderKey()), provider: studyProvider(), semanticAvailable: studyProvider() === "openai" && Boolean(process.env.OPENAI_API_KEY) } });
 }));
 app.get("/memory/notes", requireAuth, asyncRoute(async (req, res) => {
   const notes = await StudyNote.find({ userId: req.user._id }).sort({ updatedAt: -1 }).lean();
@@ -534,11 +536,14 @@ app.post("/memory/ask", requireAuth, asyncRoute(async (req, res) => {
   if (!hits.length) return res.json({ success: true, data: { answer: "I couldn't find a saved note or memory that answers that. Try different words or save the detail first.", sources: [], method: queryEmbedding ? "semantic" : "keyword" } });
   let answer = hits.map((source, index) => `${index + 1}. ${source.title}: ${source.text.slice(0, 420)}`).join("\n\n");
   let answeredBy = "retrieval";
-  if (process.env.OPENAI_API_KEY) {
+  if (studyProviderKey()) {
     try {
-      const response = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: process.env.OPENAI_MODEL || "gpt-4.1-mini", instructions: "Answer the user's question only from the private memory snippets provided. If they do not contain the answer, say you could not find it. Never invent details. Be concise and write in the user's language when clear.", input: `Question: ${question}\n\nPrivate memory snippets:\n${hits.map((source, index) => `[${index + 1}] ${source.title} (${new Date(source.createdAt).toLocaleDateString()}): ${source.text}`).join("\n\n")}`, max_output_tokens: 400 }) });
+      const memoryPrompt = `Question: ${question}\n\nPrivate memory snippets:\n${hits.map((source, index) => `[${index + 1}] ${source.title} (${new Date(source.createdAt).toLocaleDateString()}): ${source.text}`).join("\n\n")}`;
+      const response = studyProvider() === "gemini"
+        ? await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(process.env.GEMINI_MODEL || "gemini-3.8-flash")}:generateContent`, { method: "POST", headers: { "x-goog-api-key": studyProviderKey(), "Content-Type": "application/json" }, body: JSON.stringify({ systemInstruction: { parts: [{ text: "Answer the user's question only from the private memory snippets provided. If they do not contain the answer, say you could not find it. Never invent details. Be concise and write in the user's language when clear." }] }, contents: [{ role: "user", parts: [{ text: memoryPrompt }] }], generationConfig: { maxOutputTokens: 400 } }) })
+        : await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${studyProviderKey()}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: process.env.OPENAI_MODEL || "gpt-4.1-mini", instructions: "Answer the user's question only from the private memory snippets provided. If they do not contain the answer, say you could not find it. Never invent details. Be concise and write in the user's language when clear.", input: memoryPrompt, max_output_tokens: 400 }) });
       const payload = await response.json().catch(() => ({}));
-      const generated = payload.output?.flatMap((item) => item.content || []).filter((item) => item.type === "output_text").map((item) => item.text).join("\n").trim();
+      const generated = (studyProvider() === "gemini" ? payload.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n") : payload.output?.flatMap((item) => item.content || []).filter((item) => item.type === "output_text").map((item) => item.text).join("\n"))?.trim();
       if (response.ok && generated) { answer = generated; answeredBy = "ai"; }
       else console.error("Memory answer generation failed", payload.error?.message || response.status);
     } catch (error) { console.error("Memory answer request failed", error.message); }
@@ -554,9 +559,6 @@ app.post("/memory/compare", requireAuth, asyncRoute(async (req, res) => {
   const rank = (score) => sources.map((source) => ({ title: source.title, sourceType: source.sourceType, score: score(source) })).sort((a, b) => b.score - a.score).slice(0, 5);
   res.json({ success: true, data: { semantic: vector ? rank((source) => source.embedding?.length === vector.length ? cosineSimilarity(vector, source.embedding) : 0) : null, keyword: rank((source) => overlapScore(question, `${source.title} ${source.text}`)), semanticAvailable: Boolean(vector) } });
 }));
-const studyProvider = () => (process.env.STUDY_AI_PROVIDER || "gemini").trim().toLowerCase() === "openai" ? "openai" : "gemini";
-const studyProviderKey = () => studyProvider() === "gemini" ? process.env.GEMINI_API_KEY : process.env.OPENAI_API_KEY;
-
 app.post("/study/ask", requireAuth, asyncRoute(async (req, res) => {
   const useGemini = studyProvider() === "gemini";
   const aiKey = studyProviderKey();
@@ -598,7 +600,7 @@ app.post("/study/ask", requireAuth, asyncRoute(async (req, res) => {
   const answer = (useGemini ? payload.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n") : payload.output?.flatMap((item) => item.content || []).filter((item) => item.type === "output_text").map((item) => item.text).join("\n"))?.trim();
   res.json({ success: true, data: { answer: answer || "I couldn't form an answer just now. Try asking another way." } });
 }));
-app.get("/study/status", requireAuth, (_req, res) => res.json({ success: true, data: { enabled: Boolean(studyProviderKey()) } }));
+app.get("/study/status", requireAuth, (_req, res) => res.json({ success: true, data: { enabled: Boolean(studyProviderKey()), provider: studyProvider() } }));
 
 // In production, serve the built React app from this same origin. This keeps
 // API requests, Socket.IO, and the login cookie on one public address.
