@@ -151,67 +151,36 @@ function Stories({ user, selected }) {
   return <div className="feature-page stories-page"><div className="feature-heading"><span className="feature-icon"><FiHeart /></span><div><span className="eyebrow">LITTLE MOMENTS</span><h2>Stories</h2><p>Share a thought with {selected?.fullName || "your partner"}. Stories disappear after 24 hours.</p></div></div><form className={`story-create story-theme-${theme}`} onSubmit={post}><textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="What moment do you want to share?" maxLength={500}/><div className="story-create-bottom"><div className="story-themes">{themes.map((color) => <button type="button" key={color} aria-label={`${color} story theme`} className={`theme-dot ${color} ${theme === color ? "chosen" : ""}`} onClick={() => setTheme(color)}/>)}</div><button className="feature-primary" disabled={busy || !text.trim() || !selected}><FiPlus/> Share story</button></div><label className="story-music"><FiMusic/><input value={musicUrl} onChange={(e) => setMusicUrl(e.target.value)} placeholder="Add optional YouTube/Spotify music link"/></label></form><div className="story-list">{stories.map((story) => <button className={`story-tile story-theme-${story.theme}`} key={story._id} onClick={() => setActive(story)}><span className="story-avatar">{story.userId?.avatar ? <img src={assetUrl(story.userId.avatar)} alt=""/> : story.userId?.fullName?.slice(0,1)}</span><strong>{story.userId?._id === user?._id ? "Your story" : story.userId?.fullName || "Mingo friend"}</strong><p>{story.text}</p>{story.musicUrl && <small><FiMusic/> Music added</small>}<time>{new Date(story.createdAt).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"})}</time></button>)}</div>{active && <div className="story-viewer" onClick={() => setActive(null)}><button className="story-close">×</button><article className={`story-view-card story-theme-${active.theme}`} onClick={(e) => e.stopPropagation()}><strong>{active.userId?.fullName || "Your friend"}</strong><p>{active.text}</p>{active.musicUrl && <a href={active.musicUrl} target="_blank" rel="noreferrer"><FiMusic/> Open story music <FiExternalLink/></a>}{musicId && <iframe src={`https://www.youtube-nocookie.com/embed/${musicId}?autoplay=1`} title="Story music" allow="autoplay; encrypted-media"/>}</article></div>}</div>;
 }
 
-let youtubeApiPromise;
-const loadYoutubeApi = () => {
-  if (window.YT?.Player) return Promise.resolve(window.YT);
-  if (!youtubeApiPromise) youtubeApiPromise = new Promise((resolve) => {
-    const previous = window.onYouTubeIframeAPIReady;
-    window.onYouTubeIframeAPIReady = () => { previous?.(); resolve(window.YT); };
-    if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) { const script = document.createElement("script"); script.src = "https://www.youtube.com/iframe_api"; document.head.appendChild(script); }
-  });
-  return youtubeApiPromise;
-};
-
-function YoutubeMusicPlayer({ videoId, playerRef, onPlayerState, onPlayerReady }) {
-  const hostRef = useRef(null);
-  const stateCallback = useRef(onPlayerState); const readyCallback = useRef(onPlayerReady);
-  useEffect(() => { stateCallback.current = onPlayerState; readyCallback.current = onPlayerReady; }, [onPlayerState, onPlayerReady]);
-  useEffect(() => {
-    if (!videoId || !hostRef.current) return undefined;
-    let alive = true; let player;
-    loadYoutubeApi().then((YT) => {
-      if (!alive || !hostRef.current) return;
-      player = new YT.Player(hostRef.current, { width: "100%", height: "100%", videoId, playerVars: { autoplay: 0, controls: 1, playsinline: 1, rel: 0, enablejsapi: 1, origin: window.location.origin }, events: {
-        onReady: (event) => { playerRef.current = event.target; readyCallback.current(event.target); },
-        onStateChange: (event) => stateCallback.current(event.data, event.target),
-      } });
-    }).catch(() => {});
-    return () => { alive = false; playerRef.current = null; player?.destroy(); };
-  }, [videoId, playerRef]);
-  return <div className="youtube-music-player"><div ref={hostRef} /></div>;
-}
-
 function MusicRoom({ contacts, user, selected }) {
   const peer = selected || contacts[0];
-  const categories = ["top hits", "bollywood hits", "hindi classics", "punjabi hits", "tamil hits", "telugu hits", "indie India", "romantic songs", "pop hits", "hip hop", "rock classics", "lofi beats", "classical music", "jazz", "k-pop", "latin pop"];
+  const categories = ["ambient", "electronic", "indie rock", "hip hop", "jazz", "classical", "folk", "experimental", "lofi", "soundtrack"];
   const storageKey = `mingo-music-room-${user?._id || "guest"}`; const trackStorageKey = `${storageKey}-track`;
-  const [term, setTerm] = useState("top hits"); const [tracks, setTracks] = useState([]); const [track, setTrack] = useState(() => { try { return JSON.parse(localStorage.getItem(trackStorageKey) || "null"); } catch { return null; } }); const [busy, setBusy] = useState(false); const [status, setStatus] = useState("Search YouTube Music videos and play the full video inside Mingo.");
+  const [term, setTerm] = useState("ambient"); const [tracks, setTracks] = useState([]); const [track, setTrack] = useState(() => { try { return JSON.parse(localStorage.getItem(trackStorageKey) || "null"); } catch { return null; } }); const [busy, setBusy] = useState(false); const [status, setStatus] = useState("Search free MP3 tracks from independent netlabels.");
   const [roomCode, setRoomCode] = useState(() => localStorage.getItem(storageKey) || ""); const [joinCode, setJoinCode] = useState(""); const [roomCount, setRoomCount] = useState(0);
-  const playerRef = useRef(null); const roomRef = useRef(roomCode); const joinCodeRef = useRef(""); const suppressSyncRef = useRef(false); const pendingPlaybackRef = useRef(null);
+  const playerRef = useRef(null); const roomRef = useRef(roomCode); const joinCodeRef = useRef(""); const suppressSyncRef = useRef(false);
   useEffect(() => { roomRef.current = roomCode; }, [roomCode]);
   const search = useCallback(async (query) => {
     setBusy(true);
     try {
-      const { data } = await api.get("/youtube/search", { params: { q: `${query} full song` } });
-      const found = (data.data || []).map((item) => ({ id: item.id, videoId: item.id, title: item.title, artist: item.channel, artwork: item.artwork, genre: "YouTube", link: `https://www.youtube.com/watch?v=${item.id}` }));
-      setTracks(found); setStatus(found.length ? `Found ${found.length} full videos for “${query}”.` : `No videos found for “${query}”. Try another search.`);
-    } catch (error) { setTracks([]); setStatus(error.response?.data?.message || "YouTube music search is unavailable. Try again."); }
+      const { data } = await api.get("/music/search", { params: { q: query } });
+      const found = data.data || [];
+      setTracks(found); setStatus(found.length ? `Found ${found.length} free MP3 tracks for “${query}”.` : `No free MP3 tracks found for “${query}”. Try a broader search.`);
+    } catch (error) { setTracks([]); setStatus(error.response?.data?.message || "Free MP3 search is unavailable. Try again."); }
     finally { setBusy(false); }
   }, []);
-  useEffect(() => { const timer = window.setTimeout(() => search("top hits"), 0); return () => window.clearTimeout(timer); }, [search]);
+  useEffect(() => { const timer = window.setTimeout(() => search("ambient"), 0); return () => window.clearTimeout(timer); }, [search]);
   const applyRoomEvent = useCallback((event) => {
     suppressSyncRef.current = true; window.setTimeout(() => { suppressSyncRef.current = false; }, 1200);
     if (event.action === "load" && event.track) {
-      setTrack(event.track); localStorage.setItem(trackStorageKey, JSON.stringify(event.track)); pendingPlaybackRef.current = event;
-      if (playerRef.current && event.track.videoId) { playerRef.current.cueVideoById(event.track.videoId); pendingPlaybackRef.current = null; }
+      setTrack(event.track); localStorage.setItem(trackStorageKey, JSON.stringify(event.track));
       setStatus("Your listening partner picked a song. Press play when you’re ready."); return;
     }
     const player = playerRef.current;
-    if (!player) { pendingPlaybackRef.current = event; return; }
-    if (Number.isFinite(event.time)) player.seekTo(event.time, true);
-    if (event.action === "play") player.playVideo();
-    if (event.action === "pause") player.pauseVideo();
-    if (event.action === "seek") player.seekTo(event.time || 0, true);
+    if (!player) return;
+    if (Number.isFinite(event.time)) player.currentTime = event.time;
+    if (event.action === "play") player.play().catch(() => setStatus("Press play to start the shared MP3 on this device."));
+    if (event.action === "pause") player.pause();
+    if (event.action === "seek") player.currentTime = event.time || 0;
   }, [trackStorageKey]);
   const joinWithCode = useCallback((code, silent = false) => {
     if (!code || !socketAPI.connected) { if (!silent) toast.error("Mingo is reconnecting. Please wait a moment and try again."); return; }
@@ -239,7 +208,7 @@ function MusicRoom({ contacts, user, selected }) {
     return () => { socketAPI.off("music-room:sync", sync); socketAPI.off("music-room:presence", presence); };
   }, [applyRoomEvent, user?._id]);
   const sendRoomEvent = (event) => { if (roomRef.current) socketAPI.emit("music-room:sync", { ...event, code: roomRef.current }); };
-  const chooseTrack = (item) => { setTrack(item); localStorage.setItem(trackStorageKey, JSON.stringify(item)); setStatus(`Ready to play ${item.title} in Mingo.`); if (playerRef.current) playerRef.current.loadVideoById(item.videoId); sendRoomEvent({ action: "load", track: item }); };
+  const chooseTrack = (item) => { setTrack(item); localStorage.setItem(trackStorageKey, JSON.stringify(item)); setStatus(`Ready to play ${item.title} in Mingo.`); sendRoomEvent({ action: "load", track: item }); };
   const joinRoom = (event) => { event.preventDefault(); const code = joinCode.replace(/\D/g, "").slice(0, 6); if (code.length !== 6) return toast.error("Enter the 6-digit room code."); joinWithCode(code); };
   const createRoom = () => { if (!socketAPI.connected) return toast.error("Mingo is reconnecting. Please wait a moment and try again."); socketAPI.emit("music-room:create", (result) => {
     if (!result?.success) return toast.error("Couldn’t create a listening room. Check your connection and retry.");
@@ -249,19 +218,18 @@ function MusicRoom({ contacts, user, selected }) {
   }); };
   const copyCode = async () => { try { await navigator.clipboard.writeText(roomCode); toast.success("Room code copied. You can switch to chat and come back later."); } catch { toast.error("Copy didn’t work. Select and copy the code."); } };
   const leaveRoom = () => { socketAPI.emit("music-room:leave", { code: roomCode }); roomRef.current = ""; setRoomCode(""); setRoomCount(0); localStorage.removeItem(storageKey); toast("You left the listening room.", { icon: "🌙" }); };
-  const playerReady = (player) => { const pending = pendingPlaybackRef.current; if (!pending) return; pendingPlaybackRef.current = null; if (pending.action === "load" && pending.track?.videoId) player.cueVideoById(pending.track.videoId); else applyRoomEvent(pending); };
   const playerState = (state, player) => {
     if (suppressSyncRef.current || !roomRef.current) return;
-    if (state === window.YT?.PlayerState?.PLAYING) sendRoomEvent({ action: "play", time: player.getCurrentTime() });
-    if (state === window.YT?.PlayerState?.PAUSED) sendRoomEvent({ action: "pause", time: player.getCurrentTime() });
+    if (state === "play") sendRoomEvent({ action: "play", time: player.currentTime });
+    if (state === "pause") sendRoomEvent({ action: "pause", time: player.currentTime });
   };
   return <div className="feature-page music-page"><div className="feature-heading"><span className="feature-icon"><FiHeadphones /></span><div><span className="eyebrow">SAME SONG, DIFFERENT PLACES</span><h2>Music room <span className="feature-live-pill">TOGETHER</span></h2><p>Search songs across the catalog and play them inside Mingo{peer ? ` · listening with ${peer.fullName}` : ""}.</p></div></div>
     <section className="listening-room-card"><div><span className="eyebrow">PRIVATE LISTENING ROOM</span><strong>{roomCode ? `Room ${roomCode}` : "Make a room for two"}</strong><small>{roomCode ? `${roomCount || 1} listener${roomCount === 1 ? "" : "s"} connected · code is saved if you switch tabs` : "Create a 6-digit code or enter a friend’s code to join."}</small></div>{roomCode ? <div className="listening-room-code"><code>{roomCode}</code><button type="button" onClick={copyCode}>Copy code</button><button type="button" onClick={leaveRoom}>Leave</button></div> : <div className="listening-room-actions"><button type="button" className="feature-primary" onClick={createRoom}>Create a room code</button><form onSubmit={joinRoom}><input aria-label="Listening room code" inputMode="numeric" maxLength={6} value={joinCode} onChange={(event) => setJoinCode(event.target.value.replace(/\D/g, ""))} placeholder="6-digit code"/><button type="submit">Join room</button></form></div>}</section>
     <div className="music-search-controls"><form onSubmit={(event) => { event.preventDefault(); search(term.trim()); }}><FiSearch/><input value={term} onChange={(event) => setTerm(event.target.value)} placeholder="Search songs, artists, or moods"/><button disabled={busy || !term.trim()}>{busy ? "Searching…" : "Search music"}</button></form><div className="music-genre-chips">{categories.map((genre) => <button type="button" key={genre} className={term.toLowerCase() === genre ? "active" : ""} onClick={() => { setTerm(genre); search(genre); }}>{genre}</button>)}</div></div>
-    <div className="music-library-heading"><div><span className="eyebrow">MUSIC BROWSER · FULL-LENGTH VIDEOS</span><h3>{term || "Explore music"}</h3></div><span>{tracks.length} videos</span></div>
-    <div className="music-track-grid">{tracks.map((item) => <article className={`music-track-card ${track?.id === item.id ? "active" : ""}`} key={item.id}><button type="button" className="music-track-pick" onClick={() => chooseTrack(item)}><img src={item.artwork} alt=""/><span><strong>{item.title}</strong><small>{item.artist}</small><em>Play full video in Mingo</em></span><FiPlay/></button></article>)}</div>{busy && <div className="music-loading">Searching YouTube…</div>}{!busy && !tracks.length && <div className="music-empty-results">{status}</div>}
-    <section className="shared-audio-card"><div className="shared-audio-heading"><img src={track?.artwork || ""} alt=""/><div><span className="eyebrow">NOW PLAYING IN YOUR ROOM</span><strong>{track?.title || "Choose a full song to play"}</strong><small>{track?.artist || status}</small></div></div>{track?.videoId ? <YoutubeMusicPlayer key={track.videoId} videoId={track.videoId} playerRef={playerRef} onPlayerState={playerState} onPlayerReady={playerReady}/> : <div className="music-player-placeholder"><span>✦</span><strong>Your next song is waiting</strong><small>Search above for full-length YouTube music videos.</small></div>}<p>Full playback runs in YouTube’s embedded player; ads and video availability are controlled by YouTube.</p></section>
-    <p className="feature-footnote">Free full-song search uses YouTube Data API. Add a private <code>YOUTUBE_API_KEY</code> in Render → Environment to enable search. Spotify’s in-app full player requires Spotify Premium. Room codes and selected songs are saved on this device.</p></div>;
+    <div className="music-library-heading"><div><span className="eyebrow">MUSIC BROWSER · FREE MP3S</span><h3>{term || "Explore music"}</h3></div><span>{tracks.length} tracks</span></div>
+    <div className="music-track-grid">{tracks.map((item) => <article className={`music-track-card ${track?.id === item.id ? "active" : ""}`} key={item.id}><button type="button" className="music-track-pick" onClick={() => chooseTrack(item)}><img src={item.artwork} alt=""/><span><strong>{item.title}</strong><small>{item.artist}</small><em>Play MP3 in Mingo</em></span><FiPlay/></button></article>)}</div>{busy && <div className="music-loading">Searching free MP3s…</div>}{!busy && !tracks.length && <div className="music-empty-results">{status}</div>}
+    <section className="shared-audio-card"><div className="shared-audio-heading"><img src={track?.artwork || ""} alt=""/><div><span className="eyebrow">NOW PLAYING IN YOUR ROOM</span><strong>{track?.title || "Choose an MP3 to play"}</strong><small>{track?.artist || status}</small></div></div>{track?.audioUrl ? <audio key={track.id} ref={playerRef} className="mp3-music-player" src={track.audioUrl} controls preload="none" onPlay={(event) => playerState("play", event.currentTarget)} onPause={(event) => playerState("pause", event.currentTarget)} aria-label={`Play ${track.title}`} /> : <div className="music-player-placeholder"><span>♫</span><strong>Your next song is waiting</strong><small>Search the free MP3 catalog above.</small></div>}<p>Free independent music streams as MP3 from the Internet Archive Netlabels collection. Track rights and availability are set by each uploader.</p></section>
+    <p className="feature-footnote">No subscription or API key needed. Search free independent MP3s; commercial chart songs are not included unless their rights holder makes them freely available. Room codes and selected tracks are saved on this device. <a href="https://archive.org/details/netlabels" target="_blank" rel="noreferrer">Browse the source catalog</a>.</p></div>;
 }
 
 export default function FeatureHub({ tab, user, contacts, selected }) {

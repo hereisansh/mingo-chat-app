@@ -162,18 +162,32 @@ const issueSession = (res, user) => {
 };
 
 app.get("/api/health", (_req, res) => res.json({ name: "Mingo API", status: "ok" }));
-app.get("/youtube/search", requireAuth, asyncRoute(async (req, res) => {
+app.get("/music/search", requireAuth, asyncRoute(async (req, res) => {
   const query = String(req.query.q || "").trim().slice(0, 100);
   if (!query) return res.json({ success: true, data: [] });
-  if (!process.env.YOUTUBE_API_KEY) return fail(res, 503, "In-app YouTube search needs a YouTube Data API key in the server environment.");
-  const pageToken = /^[\w-]{1,100}$/.test(String(req.query.pageToken || "")) ? String(req.query.pageToken) : "";
-  const parameters = { key: process.env.YOUTUBE_API_KEY, part: "snippet", type: "video", videoEmbeddable: "true", maxResults: "12", regionCode: "IN", q: query };
-  if (req.query.kind === "reels") parameters.videoDuration = "short";
-  if (pageToken) parameters.pageToken = pageToken;
-  const response = await fetch(`https://www.googleapis.com/youtube/v3/search?${new URLSearchParams(parameters)}`);
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) return fail(res, 502, payload.error?.message || "YouTube search is unavailable right now.");
-  res.json({ success: true, data: (payload.items || []).filter((item) => item.id?.videoId).map((item) => ({ id: item.id.videoId, title: item.snippet.title, channel: item.snippet.channelTitle, artwork: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.medium?.url || "", publishedAt: item.snippet.publishedAt })), nextPageToken: payload.nextPageToken || null });
+  const escapedQuery = query.replace(/[+\-&|!(){}\[\]^"~*?:\\/]/g, " ").replace(/\s+/g, " ").trim();
+  if (!escapedQuery) return res.json({ success: true, data: [] });
+  const params = new URLSearchParams({ q: `collection:netlabels AND mediatype:audio AND (${escapedQuery.split(" ").map((word) => `(${word}*)`).join(" AND ")})`, "fl[]": "identifier", "fl[]": "title", rows: "10", page: "1", output: "json" });
+  params.delete("fl[]");
+  params.append("fl[]", "identifier"); params.append("fl[]", "title"); params.append("fl[]", "creator");
+  const searchResponse = await fetch(`https://archive.org/advancedsearch.php?${params}`, { headers: { "User-Agent": "MingoChatApp/1.0 (MP3 music search)" }, signal: AbortSignal.timeout(12000) });
+  if (!searchResponse.ok) return fail(res, 502, "The free MP3 catalog is unavailable right now. Please try again.");
+  const searchPayload = await searchResponse.json().catch(() => ({}));
+  const docs = searchPayload.response?.docs || [];
+  const tracks = await Promise.all(docs.map(async (doc) => {
+    try {
+      const metadataResponse = await fetch(`https://archive.org/metadata/${encodeURIComponent(doc.identifier)}`, { signal: AbortSignal.timeout(10000) });
+      if (!metadataResponse.ok) return null;
+      const metadata = await metadataResponse.json();
+      const mp3 = (metadata.files || []).find((file) => /\.mp3$/i.test(file.name || "") && !file.name.includes("_meta") && !file.name.includes("_files.xml"));
+      if (!mp3) return null;
+      const filePath = mp3.name.split("/").map(encodeURIComponent).join("/");
+      const title = String(metadata.metadata?.title || doc.title || "Untitled track");
+      const creator = metadata.metadata?.creator;
+      return { id: `${doc.identifier}:${mp3.name}`, title: title.slice(0, 180), artist: (Array.isArray(creator) ? creator[0] : creator) || "Internet Archive Netlabel", audioUrl: `https://archive.org/download/${encodeURIComponent(doc.identifier)}/${filePath}`, artwork: `https://archive.org/services/img/${encodeURIComponent(doc.identifier)}`, link: `https://archive.org/details/${encodeURIComponent(doc.identifier)}`, genre: "Free MP3" };
+    } catch { return null; }
+  }));
+  res.json({ success: true, data: tracks.filter(Boolean) });
 }));
 const parseInstagramReel = (raw) => {
   try {
@@ -717,7 +731,20 @@ io.on("connection", (socket) => {
     if (!socket.data.userId || !listeningRooms.has(code) || !socket.rooms.has(room)) return;
     const { code: _code, ...event } = payload;
     const state = listeningRooms.get(code);
-    if (event.action === "load" && /^[\w-]{11}$/.test(String(event.track?.videoId || ""))) state.track = event.track;
+    if (event.action === "load") {
+      try {
+        const audio = new URL(String(event.track?.audioUrl || ""));
+        if (!(audio.protocol === "https:" && audio.hostname === "archive.org" && audio.pathname.startsWith("/download/") && /\.mp3$/i.test(decodeURIComponent(audio.pathname)))) return;
+        state.track = {
+            id: String(event.track.id || "").slice(0, 300), title: String(event.track.title || "MP3 track").slice(0, 180),
+            artist: String(event.track.artist || "Independent artist").slice(0, 120), audioUrl: audio.href,
+            artwork: String(event.track.artwork || "").startsWith("https://archive.org/services/img/") ? String(event.track.artwork).slice(0, 500) : "",
+            link: String(event.track.link || "").startsWith("https://archive.org/details/") ? String(event.track.link).slice(0, 500) : "",
+            genre: "Free MP3",
+        };
+        event.track = state.track;
+      } catch {}
+    }
     if (["play", "pause", "seek"].includes(event.action)) { if (event.action !== "seek") state.action = event.action; state.time = Math.max(0, Number(event.time) || 0); }
     ListeningRoom.updateOne({ code }, { $set: { track: state.track, action: state.action, time: state.time } }).catch((error) => console.error("Listening room sync save failed", error.message));
     io.to(room).except(socket.id).emit("music-room:sync", { ...event, code, from: socket.data.userId });
