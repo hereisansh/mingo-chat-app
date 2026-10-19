@@ -270,5 +270,57 @@ export default function FeatureHub({ tab, user, contacts, selected }) {
   if (tab === "reels") return <Reels/>;
   if (tab === "study") return <Study user={user}/>;
   if (tab === "stories") return <Stories user={user} selected={selected}/>;
+  if (tab === "games") return <Games peer={selected}/>;
   return <MusicRoom contacts={contacts} user={user} selected={selected}/>;
+}
+
+function Games({ peer }) {
+  const [activeGame, setActiveGame] = useState("tic-tac-toe");
+  const playerLabel = peer?.fullName || "your person";
+  return <div className="feature-page games-page"><div className="feature-heading"><span className="feature-icon">✦</span><div><span className="eyebrow">A LITTLE PLAY BREAK</span><h2>Mini games</h2><p>Quick pass-and-play games for you and {playerLabel} on one screen.</p></div></div>
+    <div className="mini-game-tabs" role="tablist" aria-label="Choose a mini game"><button role="tab" aria-selected={activeGame === "tic-tac-toe"} className={activeGame === "tic-tac-toe" ? "active" : ""} onClick={() => setActiveGame("tic-tac-toe")}>Tic-tac-toe</button><button role="tab" aria-selected={activeGame === "memory"} className={activeGame === "memory" ? "active" : ""} onClick={() => setActiveGame("memory")}>Memory match</button></div>
+    {activeGame === "tic-tac-toe" ? <TicTacToe/> : <MemoryMatch/>}</div>;
+}
+
+function TicTacToe() {
+  const emptyBoard = () => Array(9).fill("");
+  const [board, setBoard] = useState(emptyBoard);
+  const [turn, setTurn] = useState("X");
+  const [scores, setScores] = useState({ X: 0, O: 0 });
+  const wins = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+  const winner = wins.map(([a,b,c]) => board[a] && board[a] === board[b] && board[a] === board[c] ? board[a] : "").find(Boolean);
+  const draw = !winner && board.every(Boolean);
+  const play = (index) => {
+    if (board[index] || winner || draw) return;
+    const next = [...board]; next[index] = turn; setBoard(next);
+    const won = wins.some(([a,b,c]) => next[a] && next[a] === next[b] && next[a] === next[c]);
+    if (won) setScores((current) => ({ ...current, [turn]: current[turn] + 1 }));
+    else setTurn(turn === "X" ? "O" : "X");
+  };
+  const reset = () => { setBoard(emptyBoard()); setTurn("X"); };
+  return <section className="mini-game-card"><div className="mini-game-heading"><div><span className="eyebrow">TWO PLAYER · SAME SCREEN</span><h3>Tic-tac-toe</h3><p>{winner ? `${winner === "X" ? "Player 1" : "Player 2"} wins this round!` : draw ? "It’s a draw. Play again?" : `${turn === "X" ? "Player 1" : "Player 2"}’s turn`}</p></div><div className="mini-game-score"><span>Player 1 <b>{scores.X}</b></span><span>Player 2 <b>{scores.O}</b></span></div></div><div className="tic-tac-toe-board" role="grid" aria-label="Tic-tac-toe board">{board.map((mark, index) => <button key={index} role="gridcell" aria-label={`Square ${index + 1}${mark ? `, ${mark}` : ""}`} className={`tic-tac-toe-cell ${mark === "X" ? "mark-x" : "mark-o"}`} onClick={() => play(index)} disabled={Boolean(mark || winner || draw)}>{mark}</button>)}</div><button className="feature-primary game-reset" onClick={reset}>New round</button><small className="game-note">Scores stay here until you leave this page.</small></section>;
+}
+
+const memorySymbols = ["✿", "☀", "♡", "☾", "✦", "☁", "♬", "❀"];
+const shuffledMemoryDeck = () => [...memorySymbols, ...memorySymbols].map((symbol, index) => ({ id: `${index}-${Math.random().toString(36).slice(2)}`, symbol })).sort(() => Math.random() - 0.5);
+
+function MemoryMatch() {
+  const [cards, setCards] = useState(shuffledMemoryDeck);
+  const [flipped, setFlipped] = useState([]);
+  const [matched, setMatched] = useState([]);
+  const [moves, setMoves] = useState(0);
+  const [locked, setLocked] = useState(false);
+  const reset = () => { setCards(shuffledMemoryDeck()); setFlipped([]); setMatched([]); setMoves(0); setLocked(false); };
+  const flip = (card) => {
+    if (locked || flipped.includes(card.id) || matched.includes(card.symbol)) return;
+    const next = [...flipped, card.id]; setFlipped(next);
+    if (next.length === 2) {
+      setMoves((count) => count + 1);
+      const first = cards.find((item) => item.id === next[0]);
+      if (first.symbol === card.symbol) { setMatched((current) => [...current, card.symbol]); setFlipped([]); }
+      else { setLocked(true); window.setTimeout(() => { setFlipped([]); setLocked(false); }, 750); }
+    }
+  };
+  const complete = matched.length === memorySymbols.length;
+  return <section className="mini-game-card memory-match-card"><div className="mini-game-heading"><div><span className="eyebrow">TWO PLAYER · SAME SCREEN</span><h3>Memory match</h3><p>{complete ? `You found every pair in ${moves} moves!` : "Take turns flipping cards and find all eight pairs."}</p></div><div className="mini-game-score"><span>Moves <b>{moves}</b></span><span>Pairs <b>{matched.length}/{memorySymbols.length}</b></span></div></div><div className="memory-match-board" aria-label="Memory match cards">{cards.map((card, index) => { const faceUp = flipped.includes(card.id) || matched.includes(card.symbol); return <button type="button" key={card.id} className={`memory-match-card-tile ${faceUp ? "face-up" : ""} ${matched.includes(card.symbol) ? "matched" : ""}`} onClick={() => flip(card)} disabled={locked || faceUp} aria-label={faceUp ? `Card ${index + 1}: ${card.symbol}` : `Hidden card ${index + 1}`}>{faceUp ? card.symbol : "✦"}</button>; })}</div><button className="feature-primary game-reset" onClick={reset}>New game</button><small className="game-note">Take turns with someone beside you. A new game reshuffles the cards.</small></section>;
 }

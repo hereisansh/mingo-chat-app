@@ -21,6 +21,9 @@ The server serves uploaded media from `server/uploads`; files up to 50 MB are ac
 - **Stories:** text stories with optional YouTube/Spotify links, shared only with the selected chat contact, saved in MongoDB, and shown for 24 hours.
 - **Music room:** search for YouTube music videos and play the embedded full-length videos without leaving Mingo. Create a room code to let another account join; the code and selected track survive switching tabs or refreshing. Search needs `YOUTUBE_API_KEY`. YouTube controls video availability, ads, and playback.
 - **Private chats:** only accepted follow connections are returned in the chat list. Message history, media, calls, and live events require an accepted connection; Socket.IO verifies the signed-in session instead of trusting an ID sent by the browser.
+- **Group chats:** create a named group with at least two accepted friends. Group messages are stored in MongoDB and delivered live to group members; each group route and socket join checks membership.
+- **Read receipts:** direct messages show a sent checkmark until the recipient opens the conversation, then show two checks. Receipts update live and are saved with the message.
+- **Mini games:** the Games area includes same-screen pass-and-play tic-tac-toe and a memory matching game.
 - **Presence:** chat contacts show online state or when they were last seen; the server saves the last-seen time when their final connected tab leaves.
 - **Back navigation:** signing in or registering replaces the auth page in browser history. Opening a conversation adds one in-app history step so Back returns to the conversation list first.
 

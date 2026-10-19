@@ -37,10 +37,13 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 const messageSchema = new mongoose.Schema({
   senderId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-  receiverId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-  message: { type: String, default: "" }, mediaUrl: String, mediaType: String, fileName: String,
+  receiverId: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, groupId: { type: mongoose.Schema.Types.ObjectId, ref: "Group" },
+  message: { type: String, default: "" }, mediaUrl: String, mediaType: String, fileName: String, readAt: Date,
 }, { timestamps: true });
 messageSchema.index({ senderId: 1, receiverId: 1, createdAt: 1 });
+messageSchema.index({ groupId: 1, createdAt: 1 });
+const groupSchema = new mongoose.Schema({ name: { type: String, required: true, trim: true, maxlength: 60 }, createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }, members: [{ type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }] }, { timestamps: true });
+groupSchema.index({ members: 1, updatedAt: -1 });
 const storySchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   shareWith: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
@@ -70,6 +73,7 @@ notificationSchema.index({ userId: 1, createdAt: -1 });
 const listeningRoomSchema = new mongoose.Schema({ code: { type: String, required: true, unique: true }, owner: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }, track: { type: mongoose.Schema.Types.Mixed, default: null }, action: { type: String, default: "pause" }, time: { type: Number, default: 0 }, expiresAt: { type: Date, required: true, expires: 0 } }, { timestamps: true });
 const User = mongoose.models.User || mongoose.model("User", userSchema);
 const Message = mongoose.models.Message || mongoose.model("Message", messageSchema);
+const Group = mongoose.models.Group || mongoose.model("Group", groupSchema);
 const Story = mongoose.models.Story || mongoose.model("Story", storySchema);
 const StudyNote = mongoose.models.StudyNote || mongoose.model("StudyNote", studyNoteSchema);
 const MemoryItem = mongoose.models.MemoryItem || mongoose.model("MemoryItem", memorySchema);
@@ -318,7 +322,11 @@ app.get("/user/get-messages/:friendId", requireAuth, asyncRoute(async (req, res)
   if (!mongoose.isValidObjectId(req.params.friendId)) return fail(res, 400, "Invalid conversation.");
   const friend = await User.exists({ _id: req.params.friendId }); if (!friend) return fail(res, 404, "Person not found.");
   await requireConnection(req.user._id, req.params.friendId);
+  const unread = await Message.find({ senderId: req.params.friendId, receiverId: req.user._id, readAt: { $exists: false } }).select("_id").lean();
+  const readAt = unread.length ? new Date() : null;
+  if (readAt) await Message.updateMany({ _id: { $in: unread.map(({ _id }) => _id) } }, { $set: { readAt } });
   const messages = await Message.find({ $or: [{ senderId: req.user._id, receiverId: req.params.friendId }, { senderId: req.params.friendId, receiverId: req.user._id }] }).sort({ createdAt: 1 }).lean();
+  if (readAt) io.to(String(req.params.friendId)).emit("messages:read", { readerId: String(req.user._id), messageIds: unread.map(({ _id }) => String(_id)), readAt });
   res.json({ success: true, data: messages });
 }));
 app.post("/user/send-message", requireAuth, asyncRoute(async (req, res) => {
@@ -329,6 +337,39 @@ app.post("/user/send-message", requireAuth, asyncRoute(async (req, res) => {
   await requireConnection(req.user._id, receiverID);
   const saved = await Message.create({ senderId: req.user._id, receiverId: receiverID, message: message.trim() });
   await createNotification({ userId: receiverID, actorId: req.user._id, type: "message", text: `${req.user.fullName} sent you a message.`, meta: { messageId: String(saved._id) } }).catch((error) => console.error("Message notification failed", error.message));
+  res.status(201).json({ success: true, data: saved });
+}));
+app.get("/groups", requireAuth, asyncRoute(async (req, res) => {
+  const groups = await Group.find({ members: req.user._id }).populate("members", "fullName avatar").sort({ updatedAt: -1 }).lean();
+  const data = await Promise.all(groups.map(async (group) => ({ ...group, lastMessage: await Message.findOne({ groupId: group._id }).sort({ createdAt: -1 }).select("message senderId createdAt").lean() })));
+  res.json({ success: true, data });
+}));
+app.post("/groups", requireAuth, asyncRoute(async (req, res) => {
+  const name = String(req.body.name || "").trim().slice(0, 60);
+  const memberIds = [...new Set((Array.isArray(req.body.memberIds) ? req.body.memberIds : []).map(String).filter((id) => mongoose.isValidObjectId(id) && id !== String(req.user._id)))];
+  if (name.length < 2 || memberIds.length < 2 || memberIds.length > 49) return fail(res, 400, "Enter a group name and choose 2–49 friends.");
+  for (const memberId of memberIds) await requireConnection(req.user._id, memberId);
+  const members = [req.user._id, ...memberIds];
+  const group = await Group.create({ name, createdBy: req.user._id, members });
+  const result = await Group.findById(group._id).populate("members", "fullName avatar").lean();
+  members.forEach((memberId) => io.to(String(memberId)).emit("group:created", result));
+  res.status(201).json({ success: true, data: result });
+}));
+app.get("/groups/:groupId/messages", requireAuth, asyncRoute(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.groupId)) return fail(res, 400, "Invalid group conversation.");
+  const group = await Group.findOne({ _id: req.params.groupId, members: req.user._id }).select("_id").lean();
+  if (!group) return fail(res, 404, "Group not found.");
+  const messages = await Message.find({ groupId: group._id }).sort({ createdAt: 1 }).lean();
+  res.json({ success: true, data: messages });
+}));
+app.post("/groups/:groupId/messages", requireAuth, asyncRoute(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.groupId)) return fail(res, 400, "Invalid group conversation.");
+  const message = String(req.body.message || "").trim();
+  if (!message || message.length > 5000) return fail(res, 400, "Write a message up to 5,000 characters.");
+  const group = await Group.findOne({ _id: req.params.groupId, members: req.user._id }).select("_id members").lean();
+  if (!group) return fail(res, 404, "Group not found.");
+  const saved = await Message.create({ groupId: group._id, senderId: req.user._id, message });
+  await Group.updateOne({ _id: group._id }, { $set: { updatedAt: new Date() } });
   res.status(201).json({ success: true, data: saved });
 }));
 app.post("/user/send-media", requireAuth, upload.single("media"), asyncRoute(async (req, res) => {
@@ -560,6 +601,29 @@ io.on("connection", (socket) => {
       if (!message || String(message.senderId) !== socket.data.userId) return;
       io.to(String(message.receiverId)).emit("receive", message);
     } catch (error) { console.error("Socket delivery failed", error.message); }
+  });
+  socket.on("messages:read", async ({ peerId } = {}) => {
+    try {
+      const readerId = socket.data.userId;
+      if (!readerId || !mongoose.isValidObjectId(peerId) || !await areConnected(readerId, peerId)) return;
+      const unread = await Message.find({ senderId: peerId, receiverId: readerId, readAt: { $exists: false } }).select("_id").lean();
+      if (!unread.length) return;
+      const readAt = new Date();
+      await Message.updateMany({ _id: { $in: unread.map(({ _id }) => _id) } }, { $set: { readAt } });
+      io.to(String(peerId)).emit("messages:read", { readerId, messageIds: unread.map(({ _id }) => String(_id)), readAt });
+    } catch (error) { console.error("Read receipt update failed", error.message); }
+  });
+  socket.on("group:join", async ({ groupId } = {}) => {
+    if (!socket.data.userId || !mongoose.isValidObjectId(groupId)) return;
+    if (await Group.exists({ _id: groupId, members: socket.data.userId })) socket.join(`group:${groupId}`);
+  });
+  socket.on("group:send", async ({ messageId } = {}) => {
+    try {
+      if (!socket.data.userId || !mongoose.isValidObjectId(messageId)) return;
+      const message = await Message.findById(messageId).lean();
+      if (!message?.groupId || String(message.senderId) !== socket.data.userId || !await Group.exists({ _id: message.groupId, members: socket.data.userId })) return;
+      io.to(`group:${message.groupId}`).emit("group:message", message);
+    } catch (error) { console.error("Group message delivery failed", error.message); }
   });
   socket.on("call:offer", ({ to, offer, callType } = {}) => {
     if (!socket.data.userId || !mongoose.isValidObjectId(to) || !offer?.sdp) return;
