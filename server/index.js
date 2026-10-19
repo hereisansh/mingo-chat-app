@@ -44,6 +44,8 @@ messageSchema.index({ senderId: 1, receiverId: 1, createdAt: 1 });
 messageSchema.index({ groupId: 1, createdAt: 1 });
 const groupSchema = new mongoose.Schema({ name: { type: String, required: true, trim: true, maxlength: 60 }, createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }, members: [{ type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }] }, { timestamps: true });
 groupSchema.index({ members: 1, updatedAt: -1 });
+const instagramReelSchema = new mongoose.Schema({ userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }, shortcode: { type: String, required: true }, url: { type: String, required: true } }, { timestamps: true });
+instagramReelSchema.index({ userId: 1, shortcode: 1 }, { unique: true });
 const storySchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   shareWith: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
@@ -74,6 +76,7 @@ const listeningRoomSchema = new mongoose.Schema({ code: { type: String, required
 const User = mongoose.models.User || mongoose.model("User", userSchema);
 const Message = mongoose.models.Message || mongoose.model("Message", messageSchema);
 const Group = mongoose.models.Group || mongoose.model("Group", groupSchema);
+const InstagramReel = mongoose.models.InstagramReel || mongoose.model("InstagramReel", instagramReelSchema);
 const Story = mongoose.models.Story || mongoose.model("Story", storySchema);
 const StudyNote = mongoose.models.StudyNote || mongoose.model("StudyNote", studyNoteSchema);
 const MemoryItem = mongoose.models.MemoryItem || mongoose.model("MemoryItem", memorySchema);
@@ -179,6 +182,30 @@ app.get("/youtube/search", requireAuth, asyncRoute(async (req, res) => {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) return fail(res, 502, payload.error?.message || "YouTube search is unavailable right now.");
   res.json({ success: true, data: (payload.items || []).filter((item) => item.id?.videoId).map((item) => ({ id: item.id.videoId, title: item.snippet.title, channel: item.snippet.channelTitle, artwork: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.medium?.url || "", publishedAt: item.snippet.publishedAt })), nextPageToken: payload.nextPageToken || null });
+}));
+const parseInstagramReel = (raw) => {
+  try {
+    const url = new URL(String(raw || "").trim());
+    if (url.protocol !== "https:" || !["instagram.com", "www.instagram.com"].includes(url.hostname.toLowerCase())) return null;
+    const match = url.pathname.match(/^\/reel\/([A-Za-z0-9_-]{5,})\/?$/);
+    return match ? { shortcode: match[1], url: `https://www.instagram.com/reel/${match[1]}/` } : null;
+  } catch { return null; }
+};
+app.get("/instagram/reels", requireAuth, asyncRoute(async (req, res) => {
+  const reels = await InstagramReel.find({ userId: req.user._id }).sort({ createdAt: -1 }).lean();
+  res.json({ success: true, data: reels });
+}));
+app.post("/instagram/reels", requireAuth, asyncRoute(async (req, res) => {
+  const parsed = parseInstagramReel(req.body.url);
+  if (!parsed) return fail(res, 400, "Paste a valid public Instagram Reel link, such as instagram.com/reel/…");
+  const reel = await InstagramReel.findOneAndUpdate({ userId: req.user._id, shortcode: parsed.shortcode }, { $setOnInsert: { ...parsed, userId: req.user._id } }, { upsert: true, new: true, setDefaultsOnInsert: true }).lean();
+  res.status(201).json({ success: true, data: reel });
+}));
+app.delete("/instagram/reels/:shortcode", requireAuth, asyncRoute(async (req, res) => {
+  const shortcode = String(req.params.shortcode || "");
+  if (!/^[A-Za-z0-9_-]{5,}$/.test(shortcode)) return fail(res, 400, "Invalid Instagram Reel.");
+  await InstagramReel.deleteOne({ userId: req.user._id, shortcode });
+  res.json({ success: true });
 }));
 app.post("/auth/register", asyncRoute(async (req, res) => {
   const { fullName, email, mobileNumber, password } = req.body;

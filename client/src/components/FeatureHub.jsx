@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FiBookOpen, FiExternalLink, FiHeadphones, FiHeart, FiMessageCircle, FiMusic, FiPlus, FiSend, FiYoutube, FiTrash2, FiSearch, FiPlay, FiShuffle, FiArrowUpRight } from "react-icons/fi";
+import { FiBookOpen, FiExternalLink, FiHeadphones, FiHeart, FiMessageCircle, FiMusic, FiPlus, FiSend, FiInstagram, FiTrash2, FiSearch, FiPlay, FiShuffle, FiArrowUpRight } from "react-icons/fi";
 import api, { assetUrl } from "../config/api";
 import socketAPI from "../config/webSocket";
 import toast from "react-hot-toast";
@@ -14,42 +14,39 @@ const getVideoId = (raw = "") => {
   } catch { return /^[\w-]{11}$/.test(raw.trim()) ? raw.trim() : ""; }
 };
 const themes = ["peach", "lavender", "ocean", "sunset"];
-const reelCollections = {
-  ForYou: { query: "trending viral shorts India", ids: ["dQw4w9WgXcQ", "9bZkp7q19f0", "jNQXAC9IVRw", "kJQP7kiw5Fk"] },
-  Music: { query: "music viral shorts", ids: ["kJQP7kiw5Fk", "YQHsXMglC9A", "OPf0YbXqDm0"] },
-  Laughs: { query: "funny comedy shorts", ids: ["9bZkp7q19f0", "L_jWHffIx5E", "jNQXAC9IVRw"] },
-  Learn: { query: "interesting science facts shorts", ids: ["M7lc1UVf-VE", "jNQXAC9IVRw"] },
-};
-
 function Reels() {
-  const [category, setCategory] = useState("ForYou");
-  const [items, setItems] = useState(() => reelCollections.ForYou.ids.map((id) => ({ id, title: "A little something for you", channel: "YouTube" })));
-  const [pageToken, setPageToken] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [sourceReady, setSourceReady] = useState(false);
-  const [likes, setLikes] = useState(() => { try { return JSON.parse(localStorage.getItem("mingo-reel-likes") || "[]"); } catch { return []; } });
-  const [query, setQuery] = useState("");
-  const fetchReels = useCallback(async (term, append = false, token = "") => {
-    setLoading(true);
-    try {
-      const { data } = await api.get("/youtube/search", { params: { q: `${term} shorts`, kind: "reels", pageToken: token || undefined } });
-      setItems((current) => append ? [...current, ...(data.data || [])] : (data.data || []));
-      setPageToken(data.nextPageToken || ""); setSourceReady(true);
-    } catch (error) {
-      const isSetup = error.response?.status === 503;
-      if (isSetup) { if (!append) setItems(reelCollections[category].ids.map((id) => ({ id, title: `${category} pick`, channel: "YouTube" }))); toast("The starter reel picks are ready. Add a YouTube API key to unlock live search and endless fresh picks.", { icon: "✨" }); }
-      else toast.error(error.response?.data?.message || "Couldn’t load more reels.");
-      setSourceReady(false);
-    } finally { setLoading(false); }
-  }, [category]);
-  const toggleLike = (id) => setLikes((current) => { const next = current.includes(id) ? current.filter((item) => item !== id) : [...current, id]; localStorage.setItem("mingo-reel-likes", JSON.stringify(next)); return next; });
-  useEffect(() => { const timer = window.setTimeout(() => fetchReels(reelCollections[category].query), 0); return () => window.clearTimeout(timer); }, [category, fetchReels]);
-  const changeCategory = (next) => { setCategory(next); setItems(reelCollections[next].ids.map((id) => ({ id, title: `${next} pick`, channel: "YouTube" }))); setPageToken(""); setQuery(""); };
-  const loadMore = () => { if (sourceReady && pageToken) fetchReels(reelCollections[category].query, true, pageToken); else toast("Add a YouTube API key to keep discovering fresh clips.", { icon: "✨" }); };
-  const discover = (event) => { event.preventDefault(); if (query.trim()) { setItems([]); setPageToken(""); fetchReels(query.trim()); } };
-  return <div className="feature-page reels-page"><div className="feature-heading"><span className="feature-icon"><FiPlay /></span><div><span className="eyebrow">A LITTLE SCROLL BREAK</span><h2>Reels <span className="feature-live-pill">FOR YOU</span></h2><p>A ready-to-scroll mix of YouTube favorites. No link needed to start.</p></div><button className="reel-explore-button" onClick={() => window.open("https://www.youtube.com/shorts", "_blank", "noopener,noreferrer")}><FiArrowUpRight/> Explore Shorts</button></div>
-    <div className="reel-discover-bar"><div className="reel-categories">{[["ForYou","For you"],["Music","Music"],["Laughs","Laughs"],["Learn","Learn"]].map(([id,label])=><button type="button" className={category===id?"selected":""} key={id} onClick={()=>changeCategory(id)}>{label}</button>)}</div><form onSubmit={discover}><FiSearch/><input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search clips and topics"/><button disabled={!query.trim() || loading}>Search</button></form></div>
-    {!sourceReady && <div className="feature-alert reel-api-hint"><FiYoutube/> Starter clips play below. Add <code>YOUTUBE_API_KEY</code> to Render to turn on live Shorts discovery and endless scrolling.</div>}{loading && <div className="music-loading">Finding a fresh mix…</div>}<div className="reel-feed">{items.map((item, index) => <article className="reel-card" key={`${category}-${item.id}-${index}`}><iframe src={`https://www.youtube-nocookie.com/embed/${item.id}?playsinline=1&rel=0`} title={item.title || `YouTube clip ${index + 1}`} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerPolicy="strict-origin-when-cross-origin" allowFullScreen /><div className="reel-side-actions"><button type="button" className={likes.includes(item.id)?"liked":""} onClick={()=>toggleLike(item.id)} aria-label="Like clip"><FiHeart/><span>{likes.includes(item.id)?"Liked":"Like"}</span></button><button type="button" onClick={()=>navigator.clipboard?.writeText(`https://youtu.be/${item.id}`).then(()=>toast.success("Clip link copied")).catch(()=>toast.error("Could not copy link."))} aria-label="Copy clip link"><FiExternalLink/><span>Share</span></button></div><div className="reel-caption"><strong>{item.title}</strong><span>{item.channel || "YouTube"} · scroll for the next clip</span></div></article>)}</div><button className="reel-more-button" onClick={loadMore} disabled={loading || !pageToken && sourceReady}><FiShuffle/> {loading ? "Loading…" : "Load more reels"}</button><div className="reel-feed-end">Scroll vertically or use the wheel to move between clips. Videos play inside Mingo when YouTube allows embedding.</div><p className="feature-footnote">Mingo embeds YouTube’s video player so playback remains on this site. YouTube controls content availability and may show ads.</p></div>;
+  const [items, setItems] = useState([]);
+  const [draft, setDraft] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => { let active = true; api.get("/instagram/reels").then(({ data }) => { if (active) setItems(data.data || []); }).catch((err) => { if (active) setError(err.response?.data?.message || "Couldn't load your Instagram Reels."); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, []);
+  useEffect(() => {
+    if (!items.length) return;
+    const processEmbeds = () => window.instgrm?.Embeds?.process?.();
+    const script = document.getElementById("instagram-embed-script");
+    if (script) { if (window.instgrm) processEmbeds(); else script.addEventListener("load", processEmbeds, { once: true }); return; }
+    const embedScript = document.createElement("script"); embedScript.id = "instagram-embed-script"; embedScript.async = true; embedScript.src = "https://www.instagram.com/embed.js"; embedScript.onload = processEmbeds; document.body.appendChild(embedScript);
+  }, [items]);
+  const addReel = async (event) => {
+    event.preventDefault(); if (!draft.trim() || saving) return;
+    setSaving(true); setError("");
+    try { const { data } = await api.post("/instagram/reels", { url: draft.trim() }); setItems((current) => [data.data, ...current.filter((item) => item.shortcode !== data.data.shortcode)]); setDraft(""); }
+    catch (err) { const message = err.response?.data?.message || "Couldn't add this Reel."; setError(message); toast.error(message); }
+    finally { setSaving(false); }
+  };
+  const removeReel = async (shortcode) => {
+    try { await api.delete(`/instagram/reels/${encodeURIComponent(shortcode)}`); setItems((current) => current.filter((item) => item.shortcode !== shortcode)); }
+    catch (err) { toast.error(err.response?.data?.message || "Couldn't remove this Reel."); }
+  };
+  const copyLink = async (url) => { try { await navigator.clipboard.writeText(url); toast.success("Instagram Reel link copied."); } catch { toast.error("Could not copy this link."); } };
+  return <div className="feature-page reels-page"><div className="feature-heading"><span className="feature-icon"><FiInstagram /></span><div><span className="eyebrow">A LITTLE SCROLL BREAK</span><h2>Instagram Reels</h2><p>Save public Instagram Reel links here and watch them inside Mingo.</p></div><a className="reel-explore-button" href="https://www.instagram.com/reels/" target="_blank" rel="noreferrer"><FiArrowUpRight/> Explore Instagram</a></div>
+    <form className="instagram-reel-add" onSubmit={addReel}><FiInstagram/><input type="url" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Paste a public Instagram Reel link" aria-label="Instagram Reel link" required/><button disabled={!draft.trim() || saving}><FiPlus/>{saving ? "Adding…" : "Add Reel"}</button></form>
+    <p className="instagram-reel-note">Only public Reels that allow embedding can play here. Your saved Reel links are private to your Mingo account.</p>
+    {error && <div className="feature-alert">{error}</div>}{loading && <div className="music-loading">Loading your Instagram Reels…</div>}
+    {!loading && !items.length && <div className="instagram-reel-empty"><FiInstagram/><strong>Your Reel feed is ready</strong><span>Paste a public Instagram Reel link above to add the first video.</span></div>}
+    <div className="reel-feed instagram-reel-feed">{items.map((item) => <article className="reel-card instagram-reel-card" key={item.shortcode}><blockquote className="instagram-media" data-instgrm-permalink={item.url} data-instgrm-version="14"><a href={item.url} target="_blank" rel="noreferrer">View this Reel on Instagram</a></blockquote><div className="instagram-reel-actions"><button type="button" onClick={() => copyLink(item.url)} aria-label="Copy Reel link"><FiExternalLink/><span>Share</span></button><button type="button" onClick={() => removeReel(item.shortcode)} aria-label="Remove Reel from your list"><FiTrash2/><span>Remove</span></button></div></article>)}</div>
+    <p className="feature-footnote">Instagram controls playback and availability. Private, removed, or embedding-disabled Reels may not load. Mingo stores the links, while Instagram serves the embedded video.</p></div>;
 }
 
 function Study({ user }) {
