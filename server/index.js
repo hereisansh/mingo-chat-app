@@ -441,6 +441,15 @@ app.post("/stories", requireAuth, asyncRoute(async (req, res) => {
 }));
 const studyProvider = () => (process.env.STUDY_AI_PROVIDER || "gemini").trim().toLowerCase() === "openai" ? "openai" : "gemini";
 const studyProviderKey = () => studyProvider() === "gemini" ? process.env.GEMINI_API_KEY : process.env.OPENAI_API_KEY;
+const geminiGenerateContent = async (model, apiKey, body) => {
+  const request = (modelId) => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelId)}:generateContent`, { method: "POST", headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const response = await request(model);
+  if (response.status === 503 && model !== "gemini-3.6-flash") {
+    console.warn(`Gemini ${model} is busy; retrying with gemini-3.6-flash.`);
+    return request("gemini-3.6-flash");
+  }
+  return response;
+};
 const memoryEmbedding = async (text) => {
   if (studyProvider() !== "openai" || !process.env.OPENAI_API_KEY) return null;
   const response = await fetch("https://api.openai.com/v1/embeddings", { method: "POST", headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: process.env.MEMORY_EMBEDDING_MODEL || "text-embedding-3-small", input: text.slice(0, 5000) }) });
@@ -540,7 +549,7 @@ app.post("/memory/ask", requireAuth, asyncRoute(async (req, res) => {
     try {
       const memoryPrompt = `Question: ${question}\n\nPrivate memory snippets:\n${hits.map((source, index) => `[${index + 1}] ${source.title} (${new Date(source.createdAt).toLocaleDateString()}): ${source.text}`).join("\n\n")}`;
       const response = studyProvider() === "gemini"
-        ? await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(process.env.GEMINI_MODEL || "gemini-3.8-flash")}:generateContent`, { method: "POST", headers: { "x-goog-api-key": studyProviderKey(), "Content-Type": "application/json" }, body: JSON.stringify({ systemInstruction: { parts: [{ text: "Answer the user's question only from the private memory snippets provided. If they do not contain the answer, say you could not find it. Never invent details. Be concise and write in the user's language when clear." }] }, contents: [{ role: "user", parts: [{ text: memoryPrompt }] }], generationConfig: { maxOutputTokens: 400, thinkingConfig: { thinkingLevel: "low" } } }) })
+        ? await geminiGenerateContent(process.env.GEMINI_MODEL || "gemini-3.8-flash", studyProviderKey(), { systemInstruction: { parts: [{ text: "Answer the user's question only from the private memory snippets provided. If they do not contain the answer, say you could not find it. Never invent details. Be concise and write in the user's language when clear." }] }, contents: [{ role: "user", parts: [{ text: memoryPrompt }] }], generationConfig: { maxOutputTokens: 400, thinkingConfig: { thinkingLevel: "low" } } })
         : await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${studyProviderKey()}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: process.env.OPENAI_MODEL || "gpt-4.1-mini", instructions: "Answer the user's question only from the private memory snippets provided. If they do not contain the answer, say you could not find it. Never invent details. Be concise and write in the user's language when clear.", input: memoryPrompt, max_output_tokens: 400 }) });
       const payload = await response.json().catch(() => ({}));
       const generated = (studyProvider() === "gemini" ? payload.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n") : payload.output?.flatMap((item) => item.content || []).filter((item) => item.type === "output_text").map((item) => item.text).join("\n"))?.trim();
@@ -573,7 +582,7 @@ app.post("/study/ask", requireAuth, asyncRoute(async (req, res) => {
   try {
     if (useGemini) {
       const model = process.env.GEMINI_MODEL || "gemini-3.8-flash";
-      result = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { method: "POST", headers: { "x-goog-api-key": aiKey, "Content-Type": "application/json" }, body: JSON.stringify({ systemInstruction: { parts: [{ text: "You are Mingo Study Buddy. Explain clearly for a student, use simple steps, help create revision notes and quizzes. Do not invent sources. Be supportive and concise." }] }, contents: input.map(({ role, content }) => ({ role: role === "assistant" ? "model" : "user", parts: [{ text: content }] })), generationConfig: { maxOutputTokens: 600, thinkingConfig: { thinkingLevel: "low" } } }) });
+      result = await geminiGenerateContent(model, aiKey, { systemInstruction: { parts: [{ text: "You are Mingo Study Buddy. Explain clearly for a student, use simple steps, help create revision notes and quizzes. Do not invent sources. Be supportive and concise." }] }, contents: input.map(({ role, content }) => ({ role: role === "assistant" ? "model" : "user", parts: [{ text: content }] })), generationConfig: { maxOutputTokens: 600, thinkingConfig: { thinkingLevel: "low" } } });
     } else {
       result = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${aiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: process.env.OPENAI_MODEL || "gpt-4.1-mini", instructions: "You are Mingo Study Buddy. Explain clearly for a student, use simple steps, help create revision notes and quizzes. Do not invent sources. Be supportive and concise.", input, max_output_tokens: 800 }) });
     }
