@@ -554,8 +554,13 @@ app.post("/memory/compare", requireAuth, asyncRoute(async (req, res) => {
   const rank = (score) => sources.map((source) => ({ title: source.title, sourceType: source.sourceType, score: score(source) })).sort((a, b) => b.score - a.score).slice(0, 5);
   res.json({ success: true, data: { semantic: vector ? rank((source) => source.embedding?.length === vector.length ? cosineSimilarity(vector, source.embedding) : 0) : null, keyword: rank((source) => overlapScore(question, `${source.title} ${source.text}`)), semanticAvailable: Boolean(vector) } });
 }));
+const studyProvider = () => (process.env.STUDY_AI_PROVIDER || "gemini").trim().toLowerCase() === "openai" ? "openai" : "gemini";
+const studyProviderKey = () => studyProvider() === "gemini" ? process.env.GEMINI_API_KEY : process.env.OPENAI_API_KEY;
+
 app.post("/study/ask", requireAuth, asyncRoute(async (req, res) => {
-  if (!process.env.OPENAI_API_KEY) return fail(res, 503, "Study AI is not connected yet. Add OPENAI_API_KEY in Render environment variables.");
+  const useGemini = studyProvider() === "gemini";
+  const aiKey = studyProviderKey();
+  if (!aiKey) return fail(res, 503, useGemini ? "Study AI is set to the free Gemini provider. Add GEMINI_API_KEY in Render environment variables." : "Study AI is set to OpenAI. Add OPENAI_API_KEY in Render environment variables.");
   const question = req.body.question?.trim();
   const history = Array.isArray(req.body.history) ? req.body.history.slice(-8) : [];
   if (!question || question.length > 4000) return fail(res, 400, "Enter a question under 4,000 characters.");
@@ -564,29 +569,36 @@ app.post("/study/ask", requireAuth, asyncRoute(async (req, res) => {
   const input = [...history.filter((item) => ["user", "assistant"].includes(item.role) && typeof item.content === "string").map(({ role, content }) => ({ role, content: content.slice(0, 4000) })), { role: "user", content: `${question}${noteContext}` }];
   let result;
   try {
-    result = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: process.env.OPENAI_MODEL || "gpt-4.1-mini", instructions: "You are Mingo Study Buddy. Explain clearly for a student, use simple steps, help create revision notes and quizzes. Do not invent sources. Be supportive and concise.", input, max_output_tokens: 800 }) });
+    if (useGemini) {
+      const model = process.env.GEMINI_MODEL || "gemini-3.8-flash";
+      result = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { method: "POST", headers: { "x-goog-api-key": aiKey, "Content-Type": "application/json" }, body: JSON.stringify({ systemInstruction: { parts: [{ text: "You are Mingo Study Buddy. Explain clearly for a student, use simple steps, help create revision notes and quizzes. Do not invent sources. Be supportive and concise." }] }, contents: input.map(({ role, content }) => ({ role: role === "assistant" ? "model" : "user", parts: [{ text: content }] })), generationConfig: { maxOutputTokens: 800 } }) });
+    } else {
+      result = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${aiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: process.env.OPENAI_MODEL || "gpt-4.1-mini", instructions: "You are Mingo Study Buddy. Explain clearly for a student, use simple steps, help create revision notes and quizzes. Do not invent sources. Be supportive and concise.", input, max_output_tokens: 800 }) });
+    }
   } catch (error) {
     console.error("Study assistant network request failed", error.message);
     return fail(res, 502, "Could not connect to the AI service. Try again in a moment.");
   }
   const payload = await result.json().catch(() => ({}));
   if (!result.ok) {
-    console.error("Study assistant request failed", payload.error?.message || result.status);
+    const providerMessage = payload.error?.message || payload.message;
+    console.error("Study assistant request failed", providerMessage || result.status);
     if (result.status === 401 || result.status === 429) {
       const rankedNotes = notes.map((note) => ({ ...note, score: overlapScore(question, `${note.title} ${note.text}`) })).sort((a, b) => b.score - a.score).filter((note) => note.score > 0.08).slice(0, 3);
-      const issue = result.status === 401 ? "The AI key needs attention." : "The AI service is temporarily unavailable or out of API credits.";
+      const issue = result.status === 401 ? "The AI key needs attention." : useGemini ? "The free AI quota is temporarily unavailable or has been reached." : "The AI service is temporarily unavailable or out of API credits.";
       const answer = rankedNotes.length
         ? `${issue} Here are the closest matches from your private saved notes:\n\n${rankedNotes.map((note, index) => `${index + 1}. ${note.title}\n${note.text.slice(0, 700)}`).join("\n\n")}\n\nTry asking again after the AI connection is available.`
         : `${issue} I couldn't find a relevant saved note for this question. Check the API account’s usage and credits, or add a note here and ask me about it.`;
       return res.json({ success: true, data: { answer, fallback: true } });
     }
-    if (result.status === 400 && /model/i.test(payload.error?.message || "")) return fail(res, 503, "The configured AI model is unavailable. Check OPENAI_MODEL in Render → Environment.");
+    if (result.status === 400 && /model/i.test(providerMessage || "")) return fail(res, 503, useGemini ? "The configured Gemini model is unavailable. Check GEMINI_MODEL in Render → Environment." : "The configured AI model is unavailable. Check OPENAI_MODEL in Render → Environment.");
+    if (useGemini && [400, 403].includes(result.status)) return fail(res, 502, "Gemini rejected this request. Check the API key and free-tier access in Google AI Studio.");
     return fail(res, 502, "Study AI could not answer right now. Check the AI setup and try again.");
   }
-  const answer = payload.output?.flatMap((item) => item.content || []).filter((item) => item.type === "output_text").map((item) => item.text).join("\n").trim();
+  const answer = (useGemini ? payload.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n") : payload.output?.flatMap((item) => item.content || []).filter((item) => item.type === "output_text").map((item) => item.text).join("\n"))?.trim();
   res.json({ success: true, data: { answer: answer || "I couldn't form an answer just now. Try asking another way." } });
 }));
-app.get("/study/status", requireAuth, (_req, res) => res.json({ success: true, data: { enabled: Boolean(process.env.OPENAI_API_KEY) } }));
+app.get("/study/status", requireAuth, (_req, res) => res.json({ success: true, data: { enabled: Boolean(studyProviderKey()) } }));
 
 // In production, serve the built React app from this same origin. This keeps
 // API requests, Socket.IO, and the login cookie on one public address.
