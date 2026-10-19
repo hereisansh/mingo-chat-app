@@ -733,17 +733,25 @@ io.on("connection", (socket) => {
     const state = listeningRooms.get(code);
     if (event.action === "load") {
       try {
-        const audio = new URL(String(event.track?.audioUrl || ""));
-        if (!(audio.protocol === "https:" && audio.hostname === "archive.org" && audio.pathname.startsWith("/download/") && /\.mp3$/i.test(decodeURIComponent(audio.pathname)))) return;
-        state.track = {
+        if (event.track?.spotifyUrl) {
+          const spotify = new URL(String(event.track.spotifyUrl));
+          const spotifyMatch = spotify.protocol === "https:" && spotify.hostname === "open.spotify.com" ? spotify.pathname.match(/^\/(?:intl-[a-z]{2}\/)?(track|album|playlist)\/([A-Za-z0-9]+)\/?$/i) : null;
+          if (!spotifyMatch) return;
+          const spotifyUrl = `https://open.spotify.com/${spotifyMatch[1].toLowerCase()}/${spotifyMatch[2]}`;
+          state.track = { id: spotifyUrl, title: String(event.track.title || "Spotify music").slice(0, 180), artist: String(event.track.artist || "Spotify").slice(0, 120), spotifyUrl, link: spotifyUrl, provider: "spotify" };
+        } else {
+          const audio = new URL(String(event.track?.audioUrl || ""));
+          if (!(audio.protocol === "https:" && audio.hostname === "archive.org" && audio.pathname.startsWith("/download/") && /\.mp3$/i.test(decodeURIComponent(audio.pathname)))) return;
+          state.track = {
             id: String(event.track.id || "").slice(0, 300), title: String(event.track.title || "MP3 track").slice(0, 180),
             artist: String(event.track.artist || "Independent artist").slice(0, 120), audioUrl: audio.href,
             artwork: String(event.track.artwork || "").startsWith("https://archive.org/services/img/") ? String(event.track.artwork).slice(0, 500) : "",
             link: String(event.track.link || "").startsWith("https://archive.org/details/") ? String(event.track.link).slice(0, 500) : "",
             genre: "Free MP3",
-        };
+          };
+        }
         event.track = state.track;
-      } catch {}
+      } catch { return; }
     }
     if (["play", "pause", "seek"].includes(event.action)) { if (event.action !== "seek") state.action = event.action; state.time = Math.max(0, Number(event.time) || 0); }
     ListeningRoom.updateOne({ code }, { $set: { track: state.track, action: state.action, time: state.time } }).catch((error) => console.error("Listening room sync save failed", error.message));
