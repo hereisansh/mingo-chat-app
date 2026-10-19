@@ -155,7 +155,7 @@ function MusicRoom({ contacts, user, selected }) {
   const peer = selected || contacts[0];
   const categories = ["ambient", "electronic", "indie rock", "hip hop", "jazz", "classical", "folk", "experimental", "lofi", "soundtrack"];
   const storageKey = `mingo-music-room-${user?._id || "guest"}`; const trackStorageKey = `${storageKey}-track`;
-  const [term, setTerm] = useState("ambient"); const [tracks, setTracks] = useState([]); const [track, setTrack] = useState(() => { try { return JSON.parse(localStorage.getItem(trackStorageKey) || "null"); } catch { return null; } }); const [busy, setBusy] = useState(false); const [status, setStatus] = useState("Search free MP3 tracks from independent netlabels.");
+  const [term, setTerm] = useState("ambient"); const [tracks, setTracks] = useState([]); const [track, setTrack] = useState(() => { try { const saved = JSON.parse(localStorage.getItem(trackStorageKey) || "null"); if (saved?.audioUrl?.startsWith("https://archive.org/download/")) return saved; localStorage.removeItem(trackStorageKey); return null; } catch { localStorage.removeItem(trackStorageKey); return null; } }); const [busy, setBusy] = useState(false); const [status, setStatus] = useState("Search free MP3 tracks from independent netlabels.");
   const [roomCode, setRoomCode] = useState(() => localStorage.getItem(storageKey) || ""); const [joinCode, setJoinCode] = useState(""); const [roomCount, setRoomCount] = useState(0);
   const playerRef = useRef(null); const roomRef = useRef(roomCode); const joinCodeRef = useRef(""); const suppressSyncRef = useRef(false);
   useEffect(() => { roomRef.current = roomCode; }, [roomCode]);
