@@ -165,7 +165,7 @@ app.get("/api/health", (_req, res) => res.json({ name: "Mingo API", status: "ok"
 app.get("/music/search", requireAuth, asyncRoute(async (req, res) => {
   const term = String(req.query.q || "top hits").trim().slice(0, 100);
   if (!term) return res.json({ success: true, data: [] });
-  const response = await fetch(`https://itunes.apple.com/search?${new URLSearchParams({ term, entity: "song", limit: "24", country: "IN" })}`);
+  const response = await fetch(`https://itunes.apple.com/search?${new URLSearchParams({ term, entity: "song", limit: "50", country: "IN" })}`);
   if (!response.ok) return fail(res, 502, "Music search is unavailable right now. Try again in a moment.");
   const data = await response.json();
   res.json({ success: true, data: (data.results || []).filter((track) => track.previewUrl).map((track) => ({ id: String(track.trackId), title: track.trackName, artist: track.artistName, album: track.collectionName || "Single", genre: track.primaryGenreName || "Music", artwork: track.artworkUrl100?.replace("100x100", "300x300") || "", previewUrl: track.previewUrl, link: track.trackViewUrl })) });
