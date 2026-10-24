@@ -212,6 +212,24 @@ app.get("/music/spotify/search", requireAuth, asyncRoute(async (req, res) => {
   const tracks = (searchPayload.tracks?.items || []).map((item) => ({ id: item.id, title: item.name, artist: item.artists?.map((artist) => artist.name).join(", ") || "Spotify artist", spotifyUrl: item.external_urls?.spotify || `https://open.spotify.com/track/${item.id}`, link: item.external_urls?.spotify || `https://open.spotify.com/track/${item.id}`, artwork: item.album?.images?.[0]?.url || "", provider: "spotify" }));
   res.json({ success: true, data: tracks });
 }));
+app.get("/music/youtube/search", requireAuth, asyncRoute(async (req, res) => {
+  const query = String(req.query.q || "").trim().slice(0, 100);
+  if (!query) return res.json({ success: true, data: [] });
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  if (!apiKey) return fail(res, 503, "YouTube song search needs a YOUTUBE_API_KEY saved in Render environment variables.");
+  const params = new URLSearchParams({ part: "snippet", type: "video", videoCategoryId: "10", maxResults: "12", q: query, key: apiKey });
+  const response = await fetch(`https://www.googleapis.com/youtube/v3/search?${params}`, { signal: AbortSignal.timeout(10000) });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) return fail(res, response.status === 403 ? 503 : 502, response.status === 403 ? "YouTube search is unavailable. Check that YouTube Data API v3 is enabled and the Render key is valid." : "YouTube search is unavailable right now.");
+  const videos = (payload.items || []).filter((item) => item.id?.videoId).map((item) => ({
+    id: item.id.videoId, youtubeVideoId: item.id.videoId,
+    title: String(item.snippet?.title || "YouTube song").slice(0, 180),
+    artist: String(item.snippet?.channelTitle || "YouTube creator").slice(0, 120),
+    artwork: item.snippet?.thumbnails?.medium?.url || item.snippet?.thumbnails?.default?.url || "",
+    link: `https://www.youtube.com/watch?v=${item.id.videoId}`, provider: "youtube",
+  }));
+  res.json({ success: true, data: videos });
+}));
 const parseInstagramReel = (raw) => {
   try {
     const url = new URL(String(raw || "").trim());
@@ -756,7 +774,11 @@ io.on("connection", (socket) => {
     const state = listeningRooms.get(code);
     if (event.action === "load") {
       try {
-        if (event.track?.spotifyUrl) {
+        if (event.track?.youtubeVideoId) {
+          const videoId = String(event.track.youtubeVideoId);
+          if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) return;
+          state.track = { id: videoId, youtubeVideoId: videoId, title: String(event.track.title || "YouTube music").slice(0, 180), artist: String(event.track.artist || "YouTube").slice(0, 120), artwork: String(event.track.artwork || "").startsWith("https://") ? String(event.track.artwork).slice(0, 500) : "", link: `https://www.youtube.com/watch?v=${videoId}`, provider: "youtube" };
+        } else if (event.track?.spotifyUrl) {
           const spotify = new URL(String(event.track.spotifyUrl));
           const spotifyMatch = spotify.protocol === "https:" && spotify.hostname === "open.spotify.com" ? spotify.pathname.match(/^\/(?:intl-[a-z]{2}\/)?(track|album|playlist)\/([A-Za-z0-9]+)\/?$/i) : null;
           if (!spotifyMatch) return;
