@@ -87,8 +87,6 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 
 const mediaBucket = () => new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: "media" });
 const onlineSockets = new Map();
 const listeningRooms = new Map();
-let spotifyAccessToken = "";
-let spotifyTokenExpiresAt = 0;
 
 const createNotification = async ({ userId, actorId, type, text, meta = {} }) => {
   const notification = await Notification.create({ userId, actorId, type, text, meta });
@@ -191,33 +189,14 @@ app.get("/music/search", requireAuth, asyncRoute(async (req, res) => {
   }));
   res.json({ success: true, data: tracks.filter(Boolean) });
 }));
-app.get("/music/spotify/search", requireAuth, asyncRoute(async (req, res) => {
-  const query = String(req.query.q || "").trim().slice(0, 100);
-  if (!query) return res.json({ success: true, data: [] });
-  const clientId = process.env.SPOTIFY_CLIENT_ID;
-  const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
-  if (!clientId || !clientSecret) return fail(res, 503, "Spotify search needs SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in Render. The free MP3 search still works.");
-  if (!spotifyAccessToken || Date.now() >= spotifyTokenExpiresAt) {
-    const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
-    const tokenResponse = await fetch("https://accounts.spotify.com/api/token", { method: "POST", headers: { Authorization: `Basic ${credentials}`, "Content-Type": "application/x-www-form-urlencoded" }, body: "grant_type=client_credentials", signal: AbortSignal.timeout(10000) });
-    const tokenPayload = await tokenResponse.json().catch(() => ({}));
-    if (!tokenResponse.ok || !tokenPayload.access_token) return fail(res, 502, "Spotify search could not authenticate. Check the Spotify app credentials in Render.");
-    spotifyAccessToken = tokenPayload.access_token;
-    spotifyTokenExpiresAt = Date.now() + Math.max(60, Number(tokenPayload.expires_in) || 3600) * 1000 - 30000;
-  }
-  const params = new URLSearchParams({ q: query, type: "track", limit: "12", market: "IN" });
-  const searchResponse = await fetch(`https://api.spotify.com/v1/search?${params}`, { headers: { Authorization: `Bearer ${spotifyAccessToken}` }, signal: AbortSignal.timeout(10000) });
-  const searchPayload = await searchResponse.json().catch(() => ({}));
-  if (!searchResponse.ok) return fail(res, searchResponse.status === 429 ? 429 : 502, searchResponse.status === 429 ? "Spotify search is temporarily rate limited. Try again shortly." : "Spotify search is unavailable right now.");
-  const tracks = (searchPayload.tracks?.items || []).map((item) => ({ id: item.id, title: item.name, artist: item.artists?.map((artist) => artist.name).join(", ") || "Spotify artist", spotifyUrl: item.external_urls?.spotify || `https://open.spotify.com/track/${item.id}`, link: item.external_urls?.spotify || `https://open.spotify.com/track/${item.id}`, artwork: item.album?.images?.[0]?.url || "", provider: "spotify" }));
-  res.json({ success: true, data: tracks });
-}));
 app.get("/music/youtube/search", requireAuth, asyncRoute(async (req, res) => {
   const query = String(req.query.q || "").trim().slice(0, 100);
   if (!query) return res.json({ success: true, data: [] });
   const apiKey = process.env.YOUTUBE_API_KEY;
   if (!apiKey) return fail(res, 503, "YouTube song search needs a YOUTUBE_API_KEY saved in Render environment variables.");
-  const params = new URLSearchParams({ part: "snippet", type: "video", videoCategoryId: "10", maxResults: "12", q: query, key: apiKey });
+  const pageToken = String(req.query.pageToken || "").slice(0, 200);
+  const params = new URLSearchParams({ part: "snippet", type: "video", videoCategoryId: "10", maxResults: "50", q: query, regionCode: "IN", key: apiKey });
+  if (pageToken) params.set("pageToken", pageToken);
   const response = await fetch(`https://www.googleapis.com/youtube/v3/search?${params}`, { signal: AbortSignal.timeout(10000) });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) return fail(res, response.status === 403 ? 503 : 502, response.status === 403 ? "YouTube search is unavailable. Check that YouTube Data API v3 is enabled and the Render key is valid." : "YouTube search is unavailable right now.");
@@ -228,7 +207,7 @@ app.get("/music/youtube/search", requireAuth, asyncRoute(async (req, res) => {
     artwork: item.snippet?.thumbnails?.medium?.url || item.snippet?.thumbnails?.default?.url || "",
     link: `https://www.youtube.com/watch?v=${item.id.videoId}`, provider: "youtube",
   }));
-  res.json({ success: true, data: videos });
+  res.json({ success: true, data: videos, nextPageToken: payload.nextPageToken || "" });
 }));
 const parseInstagramReel = (raw) => {
   try {
