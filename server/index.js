@@ -757,12 +757,6 @@ io.on("connection", (socket) => {
           const videoId = String(event.track.youtubeVideoId);
           if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) return;
           state.track = { id: videoId, youtubeVideoId: videoId, title: String(event.track.title || "YouTube music").slice(0, 180), artist: String(event.track.artist || "YouTube").slice(0, 120), artwork: String(event.track.artwork || "").startsWith("https://") ? String(event.track.artwork).slice(0, 500) : "", link: `https://www.youtube.com/watch?v=${videoId}`, provider: "youtube" };
-        } else if (event.track?.spotifyUrl) {
-          const spotify = new URL(String(event.track.spotifyUrl));
-          const spotifyMatch = spotify.protocol === "https:" && spotify.hostname === "open.spotify.com" ? spotify.pathname.match(/^\/(?:intl-[a-z]{2}\/)?(track|album|playlist)\/([A-Za-z0-9]+)\/?$/i) : null;
-          if (!spotifyMatch) return;
-          const spotifyUrl = `https://open.spotify.com/${spotifyMatch[1].toLowerCase()}/${spotifyMatch[2]}`;
-          state.track = { id: spotifyUrl, title: String(event.track.title || "Spotify music").slice(0, 180), artist: String(event.track.artist || "Spotify").slice(0, 120), spotifyUrl, link: spotifyUrl, provider: "spotify" };
         } else {
           const audio = new URL(String(event.track?.audioUrl || ""));
           if (!(audio.protocol === "https:" && audio.hostname === "archive.org" && audio.pathname.startsWith("/download/") && /\.mp3$/i.test(decodeURIComponent(audio.pathname)))) return;
