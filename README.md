@@ -63,3 +63,7 @@ Mingo has a Capacitor Android project in `client/android`. Its Play package ID i
 The app uses camera and microphone for calls and network access for chat. The Android project declares these permissions. The privacy policy is available at `/privacy`; account deletion is in the signed-in profile dashboard.
 
 New personal Play Console accounts created after November 13, 2023 must first run a closed test with at least 12 opted-in testers for 14 continuous days before applying for production access. Play Console account verification, store listing, content rating, Data safety answers, screenshots, reviewer login credentials, and final submission must be completed in the account owner’s Play Console.
+
+### Email verification setup
+
+When enabled, new accounts must verify an email address before Mingo creates a signed-in session. Existing accounts without a verified-email flag are asked to verify on their next login. Verification codes are 6 digits, expire after 10 minutes, and can be resent once per minute. Configure a verified Brevo sender and add `BREVO_API_KEY` plus that sender address as `EMAIL_FROM` in Render. Set `REQUIRE_EMAIL_VERIFICATION=true` only after both are configured and tested; leave it `false` until then so signup continues to work.

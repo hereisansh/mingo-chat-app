@@ -18,6 +18,8 @@ const Register = () => {
 
   const [isLoading, setIsLoading] = useState(false);
   const [validationError, setValidationError] = useState({});
+  const [verificationPending, setVerificationPending] = useState(false);
+  const [verificationCode, setVerificationCode] = useState("");
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -33,6 +35,7 @@ const Register = () => {
       confirmPassword: "",
     });
     setValidationError({});
+    setVerificationPending(false); setVerificationCode("");
   };
 
   const validate = () => {
@@ -77,17 +80,30 @@ const Register = () => {
     try {
       const res = await api.post("/auth/register", formData);
       toast.success(res.data.message);
-      handleClearForm();
-      sessionStorage.setItem("AppUser", JSON.stringify(res.data.data));
-      setUser(res.data.data);
-      setIsLogin(true);
-      navigate("/chat", { replace: true, state: location.state?.featureTab ? { featureTab: location.state.featureTab } : null });
+      setVerificationPending(true);
     } catch (error) {
       console.log(error);
       toast.error(error?.response?.data?.message || "Registration failed");
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleVerify = async (e) => {
+    e.preventDefault(); setIsLoading(true);
+    try {
+      const res = await api.post("/auth/verify-email", { email: formData.email, code: verificationCode });
+      sessionStorage.setItem("AppUser", JSON.stringify(res.data.data)); setUser(res.data.data); setIsLogin(true);
+      navigate("/chat", { replace: true, state: location.state?.featureTab ? { featureTab: location.state.featureTab } : null });
+    } catch (error) { toast.error(error?.response?.data?.message || "Email verification failed"); }
+    finally { setIsLoading(false); }
+  };
+
+  const resendCode = async () => {
+    setIsLoading(true);
+    try { const { data } = await api.post("/auth/resend-verification", { email: formData.email, password: formData.password }); toast.success(data.message); }
+    catch (error) { toast.error(error?.response?.data?.message || "Could not resend the code"); }
+    finally { setIsLoading(false); }
   };
 
   return (
@@ -103,7 +119,8 @@ const Register = () => {
               A little place for your favorite people. ✨
             </p>
 
-            <form onSubmit={handleSubmit} onReset={handleClearForm} className="space-y-4">
+            <form onSubmit={verificationPending ? handleVerify : handleSubmit} onReset={handleClearForm} className="space-y-4">
+              {!verificationPending && <>
               <div>
                 <input
                   type="text"
@@ -182,22 +199,29 @@ const Register = () => {
                 )}
               </div>
 
+              </>}
+              {verificationPending && <>
+                <p className="text-center text-base-content/70">Enter the 6-digit code we sent to <strong>{formData.email}</strong>. It expires in 10 minutes.</p>
+                <input type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required value={verificationCode} onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="6-digit email code" className="input input-bordered w-full text-center tracking-[0.4em]" />
+              </>}
+
               <div className="flex gap-3 pt-6">
-                <button
+                {!verificationPending && <button
                   type="reset"
                   disabled={isLoading}
                   className="btn btn-secondary btn-outline flex-1"
                 >
                   Clear
-                </button>
+                </button>}
                 <button
                   type="submit"
                   disabled={isLoading}
                   className="btn btn-primary flex-1"
                 >
-                  {isLoading ? "Submitting..." : "Register"}
+                  {isLoading ? "Please wait…" : verificationPending ? "Verify email and continue" : "Register"}
                 </button>
               </div>
+              {verificationPending && <div className="flex flex-col gap-2"><button type="button" disabled={isLoading} onClick={resendCode} className="btn btn-ghost">Resend code</button><button type="button" disabled={isLoading} onClick={() => setVerificationPending(false)} className="btn btn-ghost">Use a different email</button></div>}
             </form>
 
             <p className="text-center text-sm text-base-content/60 mt-4">

@@ -9,7 +9,7 @@ const PrivacyPolicy = () => (
     <p>Mingo is a chat and shared activities app. This policy explains what information Mingo handles when you create an account and use its features.</p>
 
     <h2>Information you provide</h2>
-    <p>When you register, Mingo stores your name, email address, optional phone number, and a securely hashed password. If you choose to use them, Mingo also stores your profile photo, messages and message attachments, friend requests, group chats, stories, saved Instagram Reel links, study notes, and private memory items.</p>
+    <p>When you register, Mingo stores your name, email address, optional phone number, and a securely hashed password. Mingo sends a one-time verification code to your email; only a hash of the code is stored, for up to 10 minutes. If you choose to use them, Mingo also stores your profile photo, messages and message attachments, friend requests, group chats, stories, saved Instagram Reel links, study notes, and private memory items.</p>
 
     <h2>Information created while you use Mingo</h2>
     <p>Mingo processes sign-in sessions, message delivery and read state, online and last-seen status, and activity-sharing status so chat and shared features work. Live presence, calls, games, and listening-room synchronization may be relayed through the Mingo server. They are not end-to-end encrypted.</p>

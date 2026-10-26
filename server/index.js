@@ -5,7 +5,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { randomInt } from "node:crypto";
+import { randomInt, createHmac, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import cors from "cors";
 import cookieParser from "cookie-parser";
@@ -34,7 +34,8 @@ const userSchema = new mongoose.Schema({
   fullName: { type: String, required: true, trim: true }, email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   mobileNumber: String, password: { type: String, required: true }, avatar: String, lastSeen: Date,
   following: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
-  memoryEnabled: { type: Boolean, default: false },
+  memoryEnabled: { type: Boolean, default: false }, emailVerified: { type: Boolean, default: false },
+  emailVerificationCodeHash: String, emailVerificationExpiresAt: Date, emailVerificationSentAt: Date, emailVerificationAttempts: { type: Number, default: 0 },
 }, { timestamps: true });
 const messageSchema = new mongoose.Schema({
   senderId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
@@ -104,8 +105,9 @@ io.use(async (socket, next) => {
     const token = cookie ? decodeURIComponent(cookie.slice(sessionCookieName.length + 1)) : "";
     if (!token) return next(new Error("Please sign in to use live chat."));
     const decoded = jwt.verify(token, process.env.JWT_SECRET || "mingo-local-development-secret");
-    const user = await User.findById(decoded.id).select("_id").lean();
+    const user = await User.findById(decoded.id).select("_id emailVerified").lean();
     if (!user) return next(new Error("Your account could not be found."));
+    if (emailVerificationEnabled() && !user.emailVerified) return next(new Error("Please verify your email before using live chat."));
     socket.data.authenticatedUserId = String(user._id);
     next();
   } catch { next(new Error("Your live chat session expired. Please sign in again.")); }
@@ -210,7 +212,41 @@ const fail = (res, status, message) => res.status(status).json({ success: false,
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 const sessionCookieName = "mingo_session";
 const tokenFor = (user) => jwt.sign({ id: user._id }, process.env.JWT_SECRET || "mingo-local-development-secret", { expiresIn: "30d" });
+const emailVerificationEnabled = () => String(process.env.REQUIRE_EMAIL_VERIFICATION || "false").toLowerCase() === "true";
 const cookieOptionsFor = (req) => ({ httpOnly: true, sameSite: capacitorOrigins.has(req.get("origin")) ? "none" : "lax", secure: process.env.NODE_ENV === "production", path: "/" });
+const emailCodeHash = (code) => createHmac("sha256", process.env.JWT_SECRET || "mingo-local-development-secret").update(code).digest("hex");
+const sendVerificationCode = async (user) => {
+  const apiKey = process.env.BREVO_API_KEY;
+  const senderEmail = process.env.EMAIL_FROM;
+  if (!apiKey || !senderEmail) throw new Error("Email delivery is not configured. Set BREVO_API_KEY and EMAIL_FROM in Render.");
+  const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+  user.emailVerificationCodeHash = emailCodeHash(code);
+  user.emailVerificationExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  user.emailVerificationSentAt = new Date();
+  user.emailVerificationAttempts = 0;
+  await user.save();
+  try {
+    const safeName = String(user.fullName).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: { accept: "application/json", "api-key": apiKey, "content-type": "application/json" },
+      body: JSON.stringify({
+        sender: { name: "Mingo", email: senderEmail },
+        to: [{ email: user.email, name: user.fullName }],
+        subject: "Your Mingo verification code",
+        textContent: `Hi ${user.fullName},\n\nYour Mingo verification code is ${code}. It expires in 10 minutes. If you did not request this, ignore this email.`,
+        htmlContent: `<div style="font-family:Arial,sans-serif;max-width:520px;margin:24px auto;padding:28px;border:1px solid #eee7df;border-radius:18px;color:#403e3c"><p style="color:#aa6958;font-weight:bold;letter-spacing:2px">MINGO</p><h1 style="font-size:22px">Verify your email</h1><p>Hi ${safeName}, use this code to finish creating your account:</p><p style="padding:16px;text-align:center;background:#f8f3ef;border-radius:12px;font-size:30px;font-weight:bold;letter-spacing:8px">${code}</p><p>This code expires in 10 minutes. If you did not request this, ignore this email.</p></div>`,
+      }),
+    });
+    if (!response.ok) throw new Error(`Brevo email API returned ${response.status}: ${(await response.text()).slice(0, 300)}`);
+  } catch (error) {
+    user.emailVerificationCodeHash = undefined;
+    user.emailVerificationExpiresAt = undefined;
+    user.emailVerificationSentAt = undefined;
+    await user.save();
+    throw error;
+  }
+};
 const requireAuth = asyncRoute(async (req, res, next) => {
   const token = req.cookies[sessionCookieName];
   if (!token) return fail(res, 401, "Please sign in to continue.");
@@ -226,6 +262,7 @@ const requireAuth = asyncRoute(async (req, res, next) => {
     return fail(res, 503, "Could not check your account in the database. Please try again shortly.");
   }
   if (!req.user) return fail(res, 401, "Account not found. Please sign in again.");
+  if (emailVerificationEnabled() && !req.user.emailVerified) return fail(res, 403, "Verify your email before using Mingo.");
   next();
 });
 const issueSession = (req, res, user) => {
@@ -310,16 +347,66 @@ app.post("/auth/register", asyncRoute(async (req, res) => {
   const { fullName, email, mobileNumber, password } = req.body;
   if (!fullName?.trim() || !email?.trim() || !password) return fail(res, 400, "Name, email, and password are required.");
   if (password.length < 8) return fail(res, 400, "Use a password with at least 8 characters.");
-  if (await User.exists({ email: email.toLowerCase().trim() })) return fail(res, 409, "An account with that email already exists.");
-  const user = await User.create({ fullName: fullName.trim(), email: email.toLowerCase().trim(), mobileNumber, password: await bcrypt.hash(password, 12) });
+  const normalizedEmail = email.toLowerCase().trim();
+  if (await User.exists({ email: normalizedEmail })) return fail(res, 409, "An account with that email already exists. Log in to continue email verification if you have not verified it yet.");
+  const verificationRequired = emailVerificationEnabled();
+  const user = await User.create({ fullName: fullName.trim(), email: normalizedEmail, mobileNumber, password: await bcrypt.hash(password, 12), emailVerified: false });
+  if (verificationRequired) {
+    try { await sendVerificationCode(user); }
+    catch (error) { await User.deleteOne({ _id: user._id }); console.error("Verification email could not be sent", error.message); return fail(res, 503, error.message.includes("not configured") ? "Email verification is not configured yet. The app owner must add BREVO_API_KEY and EMAIL_FROM in Render." : "We couldn't send your verification email. Check the address and try again shortly."); }
+    return res.status(201).json({ success: true, requiresVerification: true, email: user.email, message: "We sent a 6-digit verification code to your email. It expires in 10 minutes." });
+  }
   issueSession(req, res, user);
   res.status(201).json({ success: true, message: "Your Mingo account is ready!", data: publicUser(user) });
 }));
 app.post("/auth/login", asyncRoute(async (req, res) => {
   const user = await User.findOne({ email: req.body.email?.toLowerCase().trim() });
   if (!user || !await bcrypt.compare(req.body.password || "", user.password)) return fail(res, 401, "Email or password is incorrect.");
+  if (emailVerificationEnabled() && !user.emailVerified) {
+    if (!user.emailVerificationSentAt || Date.now() - new Date(user.emailVerificationSentAt).getTime() >= 60_000) {
+      try { await sendVerificationCode(user); }
+      catch (error) { console.error("Verification email could not be sent", error.message); return fail(res, 503, error.message.includes("not configured") ? "Email verification is not configured yet. The app owner must add BREVO_API_KEY and EMAIL_FROM in Render." : "We couldn't send your verification email. Try again shortly."); }
+    }
+    return res.status(403).json({ success: false, requiresVerification: true, email: user.email, message: "Verify your email to finish signing in. Enter the code sent to your inbox." });
+  }
   issueSession(req, res, user);
   res.json({ success: true, message: "Welcome back!", data: publicUser(user) });
+}));
+app.post("/auth/verify-email", asyncRoute(async (req, res) => {
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const code = String(req.body?.code || "").trim();
+  if (!/^\d{6}$/.test(code)) return fail(res, 400, "Enter the 6-digit code from your email.");
+  const user = await User.findOne({ email, emailVerified: { $ne: true } });
+  if (!user?.emailVerificationCodeHash || !user.emailVerificationExpiresAt) return fail(res, 400, "That code is invalid or expired. Sign in again to request a new code.");
+  if (new Date(user.emailVerificationExpiresAt).getTime() <= Date.now()) {
+    user.emailVerificationCodeHash = undefined; user.emailVerificationExpiresAt = undefined; user.emailVerificationSentAt = undefined; user.emailVerificationAttempts = 0; await user.save();
+    return fail(res, 410, "That code expired. Sign in again to get a new one.");
+  }
+  if (user.emailVerificationAttempts >= 5) return fail(res, 429, "Too many incorrect codes. Sign in again to request a fresh code.");
+  const provided = Buffer.from(emailCodeHash(code), "hex");
+  const expected = Buffer.from(user.emailVerificationCodeHash, "hex");
+  if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
+    user.emailVerificationAttempts += 1;
+    if (user.emailVerificationAttempts >= 5) { user.emailVerificationCodeHash = undefined; user.emailVerificationExpiresAt = undefined; user.emailVerificationSentAt = undefined; }
+    await user.save();
+    return fail(res, user.emailVerificationAttempts >= 5 ? 429 : 400, user.emailVerificationAttempts >= 5 ? "Too many incorrect codes. Sign in again to request a fresh code." : "That code doesn't match. Check your email and try again.");
+  }
+  user.emailVerified = true;
+  user.emailVerificationCodeHash = undefined; user.emailVerificationExpiresAt = undefined; user.emailVerificationSentAt = undefined; user.emailVerificationAttempts = 0;
+  await user.save();
+  issueSession(req, res, user);
+  res.json({ success: true, message: "Email verified. Welcome to Mingo!", data: publicUser(user) });
+}));
+app.post("/auth/resend-verification", asyncRoute(async (req, res) => {
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const password = String(req.body?.password || "");
+  const user = await User.findOne({ email });
+  if (!user || !await bcrypt.compare(password, user.password) || user.emailVerified) return res.json({ success: true, message: "If that account needs verification, a code has been sent." });
+  const waitMs = user.emailVerificationSentAt ? 60_000 - (Date.now() - new Date(user.emailVerificationSentAt).getTime()) : 0;
+  if (waitMs > 0) return fail(res, 429, `Please wait ${Math.ceil(waitMs / 1000)} seconds before requesting another code.`);
+  try { await sendVerificationCode(user); }
+  catch (error) { console.error("Verification email could not be sent", error.message); return fail(res, 503, error.message.includes("not configured") ? "Email verification is not configured yet. The app owner must add BREVO_API_KEY and EMAIL_FROM in Render." : "We couldn't send a new code right now. Try again shortly."); }
+  res.json({ success: true, message: "A fresh verification code has been sent. It expires in 10 minutes." });
 }));
 app.post("/auth/logout", (req, res) => {
   const cookieOptions = cookieOptionsFor(req);
@@ -361,6 +448,7 @@ app.delete("/user/account", requireAuth, asyncRoute(async (req, res) => {
 app.put("/user/profile", requireAuth, asyncRoute(async (req, res) => {
   const fullName = req.body.fullName?.trim(); const email = req.body.email?.toLowerCase().trim();
   if (!fullName || fullName.length > 80 || !email || !/^\S+@\S+\.\S+$/.test(email)) return fail(res, 400, "Enter a name and a valid email address.");
+  if (emailVerificationEnabled() && email !== req.user.email) return fail(res, 400, "Email changes are disabled until a verification flow is added for the new address.");
   if (await User.exists({ email, _id: { $ne: req.user._id } })) return fail(res, 409, "That email address is already in use.");
   req.user.fullName = fullName; req.user.email = email; req.user.mobileNumber = String(req.body.mobileNumber || "").slice(0, 30);
   await req.user.save();

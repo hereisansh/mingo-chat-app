@@ -11,6 +11,8 @@ const Login = () => {
 
   const [formData, setFormData] = useState({ email: "", password: "" });
   const [loading, setLoading] = useState(false);
+  const [verificationPending, setVerificationPending] = useState(false);
+  const [verificationCode, setVerificationCode] = useState("");
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -19,6 +21,7 @@ const Login = () => {
 
   const handleClearForm = () => {
     setFormData({ email: "", password: "" });
+    setVerificationPending(false); setVerificationCode("");
   };
 
   const handleSubmit = async (e) => {
@@ -34,10 +37,28 @@ const Login = () => {
       navigate("/chat", { replace: true, state: location.state?.featureTab ? { featureTab: location.state.featureTab } : null });
     } catch (error) {
       console.log(error);
-      toast.error(error?.response?.data?.message || "Login failed");
+      if (error?.response?.data?.requiresVerification) { setVerificationPending(true); toast.success(error.response.data.message); }
+      else toast.error(error?.response?.data?.message || "Login failed");
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleVerify = async (e) => {
+    e.preventDefault(); setLoading(true);
+    try {
+      const res = await api.post("/auth/verify-email", { email: formData.email, code: verificationCode });
+      sessionStorage.setItem("AppUser", JSON.stringify(res.data.data)); setUser(res.data.data); setIsLogin(true);
+      navigate("/chat", { replace: true, state: location.state?.featureTab ? { featureTab: location.state.featureTab } : null });
+    } catch (error) { toast.error(error?.response?.data?.message || "Email verification failed"); }
+    finally { setLoading(false); }
+  };
+
+  const resendCode = async () => {
+    setLoading(true);
+    try { const { data } = await api.post("/auth/resend-verification", formData); toast.success(data.message); }
+    catch (error) { toast.error(error?.response?.data?.message || "Could not resend the code"); }
+    finally { setLoading(false); }
   };
 
   return (
@@ -53,7 +74,11 @@ const Login = () => {
               Your favorite little corner is waiting. 👋
             </p>
 
-            <form onSubmit={handleSubmit} onReset={handleClearForm} className="space-y-4">
+            <form onSubmit={verificationPending ? handleVerify : handleSubmit} onReset={handleClearForm} className="space-y-4">
+              {verificationPending ? <>
+                <p className="text-center text-base-content/70">Enter the 6-digit code sent to <strong>{formData.email}</strong> to finish signing in.</p>
+                <input type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required value={verificationCode} onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="6-digit email code" className="input input-bordered w-full text-center tracking-[0.4em]" />
+              </> : <>
               <input
                 type="email"
                 name="email"
@@ -75,23 +100,25 @@ const Login = () => {
                 required
                 className="input input-bordered w-full"
               />
+              </>}
 
               <div className="flex gap-3 pt-4">
-                <button
+                {!verificationPending && <button
                   type="reset"
                   disabled={loading}
                   className="btn btn-secondary btn-outline flex-1"
                 >
                   Clear
-                </button>
+                </button>}
                 <button
                   type="submit"
                   disabled={loading}
                   className="btn btn-primary flex-1"
                 >
-                  {loading ? "Logging in..." : "Login"}
+                  {loading ? "Please wait…" : verificationPending ? "Verify email and continue" : "Login"}
                 </button>
               </div>
+              {verificationPending && <div className="flex flex-col gap-2"><button type="button" disabled={loading} onClick={resendCode} className="btn btn-ghost">Resend code</button><button type="button" disabled={loading} onClick={() => setVerificationPending(false)} className="btn btn-ghost">Back to login</button></div>}
             </form>
 
             <p className="text-center text-sm text-base-content/60 mt-4">
