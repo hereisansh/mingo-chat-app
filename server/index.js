@@ -144,7 +144,7 @@ const connectedUserIds = async (userId) => {
   ids.delete(String(userId));
   return [...ids];
 };
-const publicGameState = (game) => ({ code: game.code, board: [...game.board], players: [...game.players], invitedUserId: game.invitedUserId, turnUserId: game.turnUserId, winner: game.winner, draw: game.draw, status: game.status });
+const publicGameState = (game) => ({ code: game.code, gameType: game.gameType, board: [...game.board], cards: game.cards ? game.cards.map((card, index) => game.matched?.includes(index) || game.flipped?.includes(index) ? card : null) : undefined, flipped: game.flipped ? [...game.flipped] : undefined, matched: game.matched ? [...game.matched] : undefined, scores: game.scores ? [...game.scores] : undefined, moves: game.moves, players: [...game.players], invitedUserId: game.invitedUserId, turnUserId: game.turnUserId, winner: game.winner, winnerUserId: game.winnerUserId || null, draw: game.draw, status: game.status });
 const broadcastActivity = async (userId, activity) => {
   try {
     const friends = await connectedUserIds(userId);
@@ -763,16 +763,19 @@ io.on("connection", (socket) => {
   socket.on("call:reject", ({ to } = {}) => relayToFriend(to, "call:rejected", {}));
   socket.on("call:end", ({ to } = {}) => relayToFriend(to, "call:ended", {}));
   socket.on("call:busy", ({ to } = {}) => relayToFriend(to, "call:busy", {}));
-  socket.on("game:create", async ({ to } = {}, callback) => {
+  socket.on("game:create", async ({ to, gameType } = {}, callback) => {
     try {
       const from = socket.data.userId;
       if (!from || typeof callback !== "function" || !mongoose.isValidObjectId(to) || String(to) === from || !await areConnected(from, to)) return callback?.({ success: false, message: "Choose a connected friend to challenge." });
+      const safeGameType = gameType === "memory" ? "memory" : "tic-tac-toe";
       let code; do { code = String(randomInt(100000, 1000000)); } while (gameRooms.has(code));
-      const game = { code, createdBy: from, invitedUserId: String(to), players: [from], board: Array(9).fill(""), turnUserId: from, winner: null, draw: false, status: "waiting" };
+      const memorySymbols = ["✿", "☀", "♡", "☾", "✦", "☁", "♬", "❀"];
+      const cards = safeGameType === "memory" ? [...memorySymbols, ...memorySymbols].map((symbol, index) => ({ id: index, symbol })).sort(() => Math.random() - 0.5).map(({ symbol }) => symbol) : null;
+      const game = { code, gameType: safeGameType, createdBy: from, invitedUserId: String(to), players: [from], board: Array(9).fill(""), cards, flipped: [], matched: [], scores: [0, 0], moves: 0, memoryPending: false, memoryRound: 0, turnUserId: from, winner: null, winnerUserId: null, draw: false, status: "waiting" };
       gameRooms.set(code, game);
       socket.join(`game:${code}`);
       callback({ success: true, data: publicGameState(game) });
-      io.to(String(to)).emit("game:invite", { code, from });
+      io.to(String(to)).emit("game:invite", { code, from, gameType: safeGameType });
       setTimeout(() => { const current = gameRooms.get(code); if (current) { gameRooms.delete(code); io.to(`game:${code}`).emit("game:closed", { code, reason: "expired" }); io.in(`game:${code}`).socketsLeave(`game:${code}`); } }, 2 * 60 * 60 * 1000).unref?.();
     } catch (error) { console.error("Game invite failed", error.message); callback?.({ success: false, message: "Couldn’t create a game. Try again." }); }
   });
@@ -793,7 +796,7 @@ io.on("connection", (socket) => {
   });
   socket.on("game:move", ({ code, index } = {}) => {
     const normalized = String(code || "").replace(/\D/g, "").slice(0, 6); const game = gameRooms.get(normalized); const userId = socket.data.userId;
-    if (!game || !game.players.includes(userId) || game.players.length !== 2 || game.status !== "playing" || game.turnUserId !== userId || !Number.isInteger(index) || index < 0 || index > 8 || game.board[index] || game.winner || game.draw) return;
+    if (!game || game.gameType !== "tic-tac-toe" || !game.players.includes(userId) || game.players.length !== 2 || game.status !== "playing" || game.turnUserId !== userId || !Number.isInteger(index) || index < 0 || index > 8 || game.board[index] || game.winner || game.draw) return;
     const mark = game.players[0] === userId ? "X" : "O";
     game.board[index] = mark;
     const lines = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
@@ -802,10 +805,33 @@ io.on("connection", (socket) => {
     if (!game.winner && !game.draw) game.turnUserId = game.players.find((player) => player !== userId);
     io.to(`game:${normalized}`).emit("game:update", publicGameState(game));
   });
+  socket.on("game:memory:flip", ({ code, index } = {}) => {
+    const normalized = String(code || "").replace(/\D/g, "").slice(0, 6); const game = gameRooms.get(normalized); const userId = socket.data.userId;
+    if (!game || game.gameType !== "memory" || !game.players.includes(userId) || game.players.length !== 2 || game.status !== "playing" || game.turnUserId !== userId || !Number.isInteger(index) || index < 0 || index >= game.cards.length || game.matched.includes(index) || game.flipped.includes(index) || game.memoryPending) return;
+    game.flipped.push(index);
+    if (game.flipped.length === 1) { io.to(`game:${normalized}`).emit("game:update", publicGameState(game)); return; }
+    game.moves += 1; game.memoryPending = true;
+    const memoryRound = ++game.memoryRound;
+    const isMatch = game.cards[game.flipped[0]] === game.cards[game.flipped[1]];
+    const currentPlayerIndex = game.players.indexOf(userId);
+    io.to(`game:${normalized}`).emit("game:update", publicGameState(game));
+    setTimeout(() => {
+      if (gameRooms.get(normalized) !== game || !game.memoryPending || game.memoryRound !== memoryRound) return;
+      if (isMatch) { game.matched.push(...game.flipped); game.scores[currentPlayerIndex] += 1; }
+      game.flipped = []; game.memoryPending = false;
+      if (!isMatch) game.turnUserId = game.players.find((player) => player !== userId);
+      if (game.matched.length === game.cards.length) {
+        game.winnerUserId = game.scores[0] === game.scores[1] ? null : game.players[game.scores[0] > game.scores[1] ? 0 : 1];
+        game.winner = game.winnerUserId ? "win" : null; game.draw = !game.winnerUserId;
+      }
+      io.to(`game:${normalized}`).emit("game:update", publicGameState(game));
+    }, isMatch ? 350 : 950);
+  });
   socket.on("game:reset", ({ code } = {}) => {
     const normalized = String(code || "").replace(/\D/g, "").slice(0, 6); const game = gameRooms.get(normalized); const userId = socket.data.userId;
     if (!game || !game.players.includes(userId) || game.players.length !== 2) return;
-    game.board = Array(9).fill(""); game.turnUserId = game.players[0]; game.winner = null; game.draw = false; game.status = "playing";
+    game.board = Array(9).fill(""); game.flipped = []; game.matched = []; game.scores = [0, 0]; game.moves = 0; game.memoryPending = false; game.memoryRound += 1; game.turnUserId = game.players[0]; game.winner = null; game.winnerUserId = null; game.draw = false; game.status = "playing";
+    if (game.gameType === "memory") { const symbols = ["✿", "☀", "♡", "☾", "✦", "☁", "♬", "❀"]; game.cards = [...symbols, ...symbols].sort(() => Math.random() - 0.5); }
     io.to(`game:${normalized}`).emit("game:update", publicGameState(game));
   });
   socket.on("game:leave", ({ code } = {}) => {
@@ -819,7 +845,7 @@ io.on("connection", (socket) => {
       return;
     }
     game.players = game.players.filter((player) => player !== userId);
-    game.board = Array(9).fill(""); game.turnUserId = game.createdBy; game.winner = null; game.draw = false; game.status = "waiting";
+    game.board = Array(9).fill(""); game.flipped = []; game.matched = []; game.scores = [0, 0]; game.moves = 0; game.memoryPending = false; game.memoryRound += 1; game.turnUserId = game.createdBy; game.winner = null; game.winnerUserId = null; game.draw = false; game.status = "waiting";
     io.to(`game:${normalized}`).emit("game:update", publicGameState(game));
   });
   socket.on("music:sync", (payload = {}) => {
