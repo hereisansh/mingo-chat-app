@@ -23,7 +23,7 @@ const PrivacyPolicy = () => (
 
     <h2>Retention and deletion</h2>
     <p>You can delete your account from your profile in Mingo. Account deletion removes your profile, messages and attachments, stories, saved links, notes, memories, notifications, friend requests, and groups you created from Mingo’s active database. Some copies may remain temporarily in provider backups before they expire.</p>
-    <p>To request deletion, sign in, open your profile, choose “Delete account,” and confirm with your password. If you cannot sign in, use the support form on the <Link to="/contact">Contact page</Link>.</p>
+    <p>To request deletion, use the <Link to="/delete-account">account deletion page</Link> or sign in, open your profile, and choose “Delete account.” Your password is used to verify the request and is not stored by the deletion form.</p>
 
     <h2>Security and children</h2>
     <p>Mingo uses HTTPS for its hosted service and hashes account passwords. Mingo messages are not end-to-end encrypted. Mingo is not designed for children under 13.</p>

@@ -8,6 +8,7 @@ import Chat from "./pages/Chat";
 import ContactUs from "./pages/Contactus";
 import UserDashboard from "./pages/UserDashboard";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
+import DeleteAccount from "./pages/DeleteAccount";
 
 const App = () => {
   const path = useLocation().pathname;
@@ -23,6 +24,7 @@ const App = () => {
         <Route path="/contact" element={<ContactUs />} />
         <Route path="/dashboard" element={<UserDashboard />} />
         <Route path="/privacy" element={<PrivacyPolicy />} />
+        <Route path="/delete-account" element={<DeleteAccount />} />
       </Routes>
     </>
   );
