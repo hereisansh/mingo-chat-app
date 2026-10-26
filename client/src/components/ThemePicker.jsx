@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { applyMingoTheme } from "../config/theme";
 
-const options = [["light", "Soft light"], ["dark", "Dark"], ["black", "Black"], ["spotify", "Spotify"], ["claude", "Claude"], ["corporate", "Corporate"], ["ghibli", "Ghibli"], ["halloween", "Halloween"]];
+const options = [["light", "Soft light"], ["dark", "Dark"], ["black", "Black"], ["spotify", "Spotify"], ["claude", "Claude"], ["corporate", "Corporate"], ["ghibli", "Ghibli"], ["halloween", "Halloween"], ["futuristic", "Futuristic"]];
 
 export default function ThemePicker({ compact = false }) {
   const [theme, setTheme] = useState(() => localStorage.getItem("mingoTheme") || "light");

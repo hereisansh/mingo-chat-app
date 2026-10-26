@@ -72,6 +72,7 @@ button:active{transform:scale(.98)}
 :root[data-theme="corporate"]{--theme-bg:#edf2f8;--theme-panel:#fff;--theme-panel-soft:#f4f7fb;--theme-text:#243449;--theme-muted:#78899b;--theme-line:#dce5ef;--theme-accent:#3676bd;--theme-accent-soft:#e3edf8;color-scheme:light}
 :root[data-theme="ghibli"]{--theme-bg:#e9f4ee;--theme-panel:#fffdf2;--theme-panel-soft:#f2f8ec;--theme-text:#345344;--theme-muted:#7e9688;--theme-line:#d7e6d7;--theme-accent:#528b70;--theme-accent-soft:#e2f0df;color-scheme:light}
 :root[data-theme="halloween"]{--theme-bg:#1b1421;--theme-panel:#271c2e;--theme-panel-soft:#33243b;--theme-text:#f8eefb;--theme-muted:#c4adc8;--theme-line:#4c3853;--theme-accent:#f18b3d;--theme-accent-soft:#412b35;color-scheme:dark}
+:root[data-theme="futuristic"]{--theme-bg:#080b18;--theme-panel:#10162a;--theme-panel-soft:#151d35;--theme-text:#edf3ff;--theme-muted:#93a2c4;--theme-line:#273350;--theme-accent:#8b7cff;--theme-accent-soft:#25254a;color-scheme:dark}
 body{background:var(--theme-bg);color:var(--theme-text);transition:background .25s,color .25s}
 .site-header,.people-panel,.conversation-panel,.feature-page,.study-chat,.notes-panel,.memory-card,.profile-page,.auth-card{color:var(--theme-text)}
 .messenger-shell{background:var(--theme-bg)!important}
@@ -106,3 +107,37 @@ body{background:var(--theme-bg);color:var(--theme-text);transition:background .2
 .spotify-connect-form{margin-top:8px}.spotify-mark{display:grid;place-items:center;width:24px;height:24px;flex:0 0 auto;border-radius:50%;background:#1ed760;color:#101010;font-size:14px;font-weight:800}.spotify-music-player{width:100%;min-height:152px;overflow:hidden;border-radius:12px;background:var(--theme-panel-soft)}.spotify-music-player iframe{width:100%;border:0;border-radius:12px}
 
 .youtube-music-player{width:100%;max-width:760px;aspect-ratio:16/9;overflow:hidden;border-radius:13px;background:#161616}.youtube-music-player iframe{width:100%;height:100%;border:0}
+
+/* Mingo Futuristic theme */
+:root[data-theme="futuristic"] body{background:radial-gradient(ellipse at 8% 0%,#21316a55,transparent 38%),radial-gradient(ellipse at 96% 88%,#44256a44,transparent 35%),var(--theme-bg)}
+:root[data-theme="futuristic"] .messenger-shell{background:radial-gradient(ellipse at 5% 5%,#293b7952,transparent 34%),radial-gradient(ellipse at 92% 92%,#65387530,transparent 38%),var(--theme-bg)!important}
+:root[data-theme="futuristic"] .people-panel,:root[data-theme="futuristic"] .conversation-panel{box-shadow:0 22px 70px #02040d88,0 0 0 1px #ffffff08;backdrop-filter:blur(18px)}
+:root[data-theme="futuristic"] .brand-mark,:root[data-theme="futuristic"] .feature-icon{background:linear-gradient(145deg,#9383ff,#54d6f4)!important;color:#0c1021!important;box-shadow:0 0 28px #8174ff55}
+:root[data-theme="futuristic"] .brand-name{letter-spacing:-1.2px}
+:root[data-theme="futuristic"] .profile-strip{background:linear-gradient(115deg,#18213b,#151a30)!important;border:1px solid #34446c!important}
+:root[data-theme="futuristic"] .feature-nav{background:#0b1020;border-color:#273350;box-shadow:inset 0 1px #ffffff08}
+:root[data-theme="futuristic"] .feature-nav button{color:#8795b6;transition:background .2s,color .2s,transform .2s}
+:root[data-theme="futuristic"] .feature-nav button:hover{background:#1b2441;color:#e8e9ff;transform:translateY(-1px)}
+:root[data-theme="futuristic"] .feature-nav button.feature-nav-active{background:linear-gradient(130deg,#7f70f2,#514fa9)!important;color:white!important;box-shadow:0 5px 18px #7567ef55}
+:root[data-theme="futuristic"] .search-box,:root[data-theme="futuristic"] .composer{box-shadow:inset 0 1px #ffffff08}
+:root[data-theme="futuristic"] .search-box:focus-within,:root[data-theme="futuristic"] .composer:focus-within{border-color:#7774f5!important;box-shadow:0 0 0 3px #7774f522,0 8px 28px #080b1880}
+:root[data-theme="futuristic"] .new-chat,:root[data-theme="futuristic"] .send-button,:root[data-theme="futuristic"] .feature-primary{background:linear-gradient(130deg,#8e7dff,#6267e8)!important;box-shadow:0 6px 18px #7268ef44}
+:root[data-theme="futuristic"] .person-row{transition:background .18s,transform .18s}
+:root[data-theme="futuristic"] .person-row:hover{transform:translateX(2px)}
+:root[data-theme="futuristic"] .person-active{box-shadow:inset 2px 0 #8b7cff,0 5px 20px #05081355}
+:root[data-theme="futuristic"] .conversation-header{background:linear-gradient(100deg,#10162a,#11172b)!important}
+:root[data-theme="futuristic"] .conversation-scroll{background-color:#0d1222;background-image:linear-gradient(#ffffff04 1px,transparent 1px),linear-gradient(90deg,#ffffff04 1px,transparent 1px);background-size:32px 32px}
+:root[data-theme="futuristic"] .welcome-card{background:linear-gradient(145deg,#151d35,#11172a);border-color:#2b3859;box-shadow:0 14px 45px #05081488}
+:root[data-theme="futuristic"] .welcome-title{color:#edf3ff}
+:root[data-theme="futuristic"] .welcome-sparkle,:root[data-theme="futuristic"] .welcome-reaction{color:#a99cff}
+:root[data-theme="futuristic"] .welcome-reaction{background:#25254a}
+:root[data-theme="futuristic"] .bubble-own{background:linear-gradient(135deg,#7669e5,#575cc5);box-shadow:0 7px 22px #5956cc33}
+:root[data-theme="futuristic"] .bubble-theirs{background:#19223a!important;border-color:#2a385a!important;color:#e4ebfb!important}
+:root[data-theme="futuristic"] .composer-wrap{background:#10162a}
+:root[data-theme="futuristic"] .message-input{color:#edf3ff}
+:root[data-theme="futuristic"] .chat-date span{background:#2a3451}
+:root[data-theme="futuristic"] .feature-page{background:radial-gradient(ellipse at 84% 0%,#34316b33,transparent 38%),var(--theme-panel)!important}
+:root[data-theme="futuristic"] .feature-heading .eyebrow,:root[data-theme="futuristic"] .eyebrow{color:#a79cff}
+:root[data-theme="futuristic"] .memory-card,:root[data-theme="futuristic"] .mini-game-card,:root[data-theme="futuristic"] .music-track-card,:root[data-theme="futuristic"] .listening-room-card{box-shadow:0 12px 34px #05081466}
+:root[data-theme="futuristic"] .site-theme-select{border-color:#34446c;border-radius:10px}
+:root[data-theme="futuristic"] ::selection{background:#8276f477;color:#fff}

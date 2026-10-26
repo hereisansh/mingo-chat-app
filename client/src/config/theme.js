@@ -1,4 +1,4 @@
-const themeValues = ["light", "dark", "black", "spotify", "claude", "corporate", "ghibli", "halloween"];
+const themeValues = ["light", "dark", "black", "spotify", "claude", "corporate", "ghibli", "halloween", "futuristic"];
 
 export const applyMingoTheme = (theme) => {
   const safeTheme = themeValues.includes(theme) ? theme : "light";
