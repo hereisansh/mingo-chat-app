@@ -49,6 +49,7 @@ export default function Chat() {
   const [mobileList, setMobileList] = useState(!location.state?.conversation && !location.state?.featureTab);
   const [activeTab, setActiveTab] = useState(location.state?.featureTab || "chats");
   const [shareActivity, setShareActivity] = useState(false);
+  const [gameInvite, setGameInvite] = useState(null);
   const scrollRef = useRef(null);
   const friendActivitiesRef = useRef(new Map());
   const fileRef = useRef(null);
@@ -112,11 +113,13 @@ export default function Chat() {
       setContacts((people) => people.map(update));
       setSelected((person) => person ? update(person) : person);
     };
+    const receiveGameInvite = (invite) => { setGameInvite(invite); setActiveTab("games"); setMobileList(false); toast("Your friend invited you to a game!", { icon: "🎮" }); };
     socketAPI.on("connect", joinRoom);
     socketAPI.on("presence:update", updatePresence);
     socketAPI.on("activity:update", updateActivity);
+    socketAPI.on("game:invite", receiveGameInvite);
     if (socketAPI.connected) joinRoom();
-    return () => { window.removeEventListener("mingo:people-changed", refreshPeople); socketAPI.off("connect", joinRoom); socketAPI.off("presence:update", updatePresence); socketAPI.off("activity:update", updateActivity); socketAPI.off("group:created", onGroupCreated); socketAPI.off("group:message", onGroupMessage); socketAPI.emit("OmNamahShivay", user._id); };
+    return () => { window.removeEventListener("mingo:people-changed", refreshPeople); socketAPI.off("connect", joinRoom); socketAPI.off("presence:update", updatePresence); socketAPI.off("activity:update", updateActivity); socketAPI.off("game:invite", receiveGameInvite); socketAPI.off("group:created", onGroupCreated); socketAPI.off("group:message", onGroupMessage); socketAPI.emit("OmNamahShivay", user._id); };
   }, [user, navigate]);
 
   useEffect(() => {
@@ -275,7 +278,7 @@ export default function Chat() {
     </aside>
 
     <section className={`conversation-panel ${mobileList ? "mobile-hidden" : ""}`}>
-      {activeTab !== "chats" ? <><button className="feature-mobile-back" onClick={backToPeople}>‹ <span>Back to Mingo</span></button><FeatureHub tab={activeTab} user={user} contacts={contacts} selected={selected}/></> : selected ? <>
+      {activeTab !== "chats" ? <><button className="feature-mobile-back" onClick={backToPeople}>‹ <span>Back to Mingo</span></button><FeatureHub tab={activeTab} user={user} contacts={contacts} selected={selected} gameInvite={gameInvite} onGameInviteHandled={() => setGameInvite(null)}/></> : selected ? <>
         <header className="conversation-header"><button className="back-button" onClick={backToPeople}>‹</button><div className="avatar header-avatar" style={{ "--avatar-color": palette[Math.max(0, contacts.indexOf(selected)) % palette.length] }}>{selected.isGroup ? <FiUsers/> : selected.avatar ? <img src={assetUrl(selected.avatar)} alt=""/> : initials(selected.fullName)}</div><div className="header-person"><strong>{selected.isGroup ? selected.name : selected.fullName}</strong><span>{selected.isGroup ? `${selected.members?.length || 0} members` : selected.online ? <><i className="online-dot" /> online{selected.activity && <> · <b className="header-activity">{activityLabels[selected.activity]}</b></>}</> : presenceText(selected)}</span></div><div className="header-actions">{!selected.isGroup && <><button className="icon-button" title="Voice call" disabled={!!call} onClick={() => startCall(selected, "audio")}><FiPhone /></button><button className="icon-button" title="Video call" disabled={!!call} onClick={() => startCall(selected, "video")}><FiVideo /></button></>}<span className="header-divider" /><button className="icon-button" title="Conversation options"><FiMoreVertical /></button></div></header>
         <div className="conversation-scroll" ref={scrollRef}>
           <div className="chat-date"><span /> <small>YOUR LITTLE CORNER OF THE INTERNET</small> <span /></div>

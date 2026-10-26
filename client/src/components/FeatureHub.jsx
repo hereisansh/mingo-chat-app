@@ -308,20 +308,69 @@ function MusicRoom({ contacts, user, selected }) {
     <p className="feature-footnote">Search for a song or artist above, then choose a result to play it in YouTube’s player and sync controls with your room. Search results come from YouTube and are not a complete licensed Bollywood catalog. Free independent MP3s are also available. Room codes and selected tracks are saved on this device.</p></div>;
 }
 
-export default function FeatureHub({ tab, user, contacts, selected }) {
+export default function FeatureHub({ tab, user, contacts, selected, gameInvite, onGameInviteHandled }) {
   if (tab === "reels") return <Reels/>;
   if (tab === "study") return <Study user={user}/>;
   if (tab === "stories") return <Stories user={user} selected={selected}/>;
-  if (tab === "games") return <Games peer={selected}/>;
+  if (tab === "games") return <Games peer={selected} contacts={contacts} user={user} invite={gameInvite} onInviteHandled={onGameInviteHandled}/>;
   return <MusicRoom contacts={contacts} user={user} selected={selected}/>;
 }
 
-function Games({ peer }) {
-  const [activeGame, setActiveGame] = useState("tic-tac-toe");
+function Games({ peer, contacts, user, invite, onInviteHandled }) {
+  const [activeGame, setActiveGame] = useState("online");
   const playerLabel = peer?.fullName || "your person";
-  return <div className="feature-page games-page"><div className="feature-heading"><span className="feature-icon">✦</span><div><span className="eyebrow">A LITTLE PLAY BREAK</span><h2>Mini games</h2><p>Quick pass-and-play games for you and {playerLabel} on one screen.</p></div></div>
-    <div className="mini-game-tabs" role="tablist" aria-label="Choose a mini game"><button role="tab" aria-selected={activeGame === "tic-tac-toe"} className={activeGame === "tic-tac-toe" ? "active" : ""} onClick={() => setActiveGame("tic-tac-toe")}>Tic-tac-toe</button><button role="tab" aria-selected={activeGame === "memory"} className={activeGame === "memory" ? "active" : ""} onClick={() => setActiveGame("memory")}>Memory match</button></div>
-    {activeGame === "tic-tac-toe" ? <TicTacToe/> : <MemoryMatch/>}</div>;
+  return <div className="feature-page games-page"><div className="feature-heading"><span className="feature-icon">✦</span><div><span className="eyebrow">A LITTLE PLAY BREAK</span><h2>Mini games</h2><p>Challenge {playerLabel} or play a quick game side by side.</p></div></div>
+    <div className="mini-game-tabs" role="tablist" aria-label="Choose a mini game"><button role="tab" aria-selected={activeGame === "online"} className={activeGame === "online" ? "active" : ""} onClick={() => setActiveGame("online")}>Play online</button><button role="tab" aria-selected={activeGame === "memory"} className={activeGame === "memory" ? "active" : ""} onClick={() => setActiveGame("memory")}>Memory match</button><button role="tab" aria-selected={activeGame === "local"} className={activeGame === "local" ? "active" : ""} onClick={() => setActiveGame("local")}>Same device</button></div>
+    {activeGame === "online" ? <OnlineTicTacToe peer={peer} contacts={contacts} user={user} invite={invite} onInviteHandled={onInviteHandled}/> : activeGame === "memory" ? <MemoryMatch/> : <TicTacToe/>}</div>;
+}
+
+function OnlineTicTacToe({ peer, contacts, user, invite, onInviteHandled }) {
+  const [room, setRoom] = useState(null);
+  const [targetId, setTargetId] = useState(peer && !peer.isGroup ? String(peer._id) : "");
+  const [joinCode, setJoinCode] = useState("");
+  const roomRef = useRef(null);
+  useEffect(() => { if (peer && !peer.isGroup) setTargetId(String(peer._id)); }, [peer?._id, peer?.isGroup]);
+  useEffect(() => { roomRef.current = room; }, [room]);
+  useEffect(() => {
+    const update = (state) => { if (String(state.code) === String(roomRef.current?.code)) { setRoom(state); sessionStorage.setItem("mingoGameRoom", state.code); } };
+    const closed = ({ code }) => { if (String(code) === String(roomRef.current?.code)) { setRoom(null); roomRef.current = null; sessionStorage.removeItem("mingoGameRoom"); toast("This game invite has expired."); } };
+    const resume = () => { const code = roomRef.current?.code || sessionStorage.getItem("mingoGameRoom"); if (code) socketAPI.emit("game:join", { code }, (result) => { if (result?.success) setRoom(result.data); }); };
+    socketAPI.on("game:update", update); socketAPI.on("game:closed", closed); socketAPI.on("connect", resume);
+    const savedCode = sessionStorage.getItem("mingoGameRoom"); if (savedCode && socketAPI.connected) resume();
+    return () => { socketAPI.off("game:update", update); socketAPI.off("game:closed", closed); socketAPI.off("connect", resume); };
+  }, []);
+  const create = () => {
+    if (!targetId) return toast.error("Choose a friend first.");
+    socketAPI.emit("game:create", { to: targetId }, (result) => {
+      if (!result?.success) return toast.error(result?.message || "Couldn’t start the game.");
+      setRoom(result.data); sessionStorage.setItem("mingoGameRoom", result.data.code);
+      toast.success("Game invite sent! Your friend can join from their Games tab.");
+    });
+  };
+  const join = (code = joinCode) => {
+    socketAPI.emit("game:join", { code }, (result) => {
+      if (!result?.success) return toast.error(result?.message || "Couldn’t join that game.");
+      setRoom(result.data); sessionStorage.setItem("mingoGameRoom", result.data.code); setJoinCode(""); onInviteHandled?.();
+    });
+  };
+  const leave = () => { if (room) socketAPI.emit("game:leave", { code: room.code }); setRoom(null); roomRef.current = null; sessionStorage.removeItem("mingoGameRoom"); onInviteHandled?.(); };
+  const play = (index) => { if (room && room.status === "playing" && room.turnUserId === String(user?._id)) socketAPI.emit("game:move", { code: room.code, index }); };
+  const myIndex = room?.players?.indexOf(String(user?._id)) ?? -1;
+  const myMark = myIndex === 0 ? "X" : myIndex === 1 ? "O" : "";
+  const isMyTurn = room?.turnUserId === String(user?._id);
+  const opponentId = room?.players?.find((playerId) => playerId !== String(user?._id)) || room?.invitedUserId;
+  const opponent = contacts.find((person) => String(person._id) === String(opponentId));
+  const opponentName = opponent?.fullName || peer?.fullName || "Your friend";
+  const winningPlayerId = room?.winner ? room.players?.[room.winner === "X" ? 0 : 1] : null;
+  const winnerText = room?.winner ? (winningPlayerId === String(user?._id) ? "You win! 🎉" : `${opponentName} wins!`) : room?.draw ? "It’s a draw. Play another round?" : null;
+  const invitedFriend = contacts.find((person) => String(person._id) === String(invite?.from));
+  return <section className="mini-game-card online-game-card">
+    <div className="mini-game-heading"><div><span className="eyebrow">LIVE · PLAY TOGETHER</span><h3>Tic-tac-toe</h3><p>{room ? room.status === "waiting" ? "Invite sent — waiting for your friend to join…" : winnerText || (isMyTurn ? "Your turn" : "Waiting for your friend’s move…") : "Invite a connected friend and play from two devices."}</p></div>{room && <div className="mini-game-score"><span>You <b>{myMark || "—"}</b></span><span>{opponentName || invitedFriend?.fullName || "Friend"} <b>{myMark === "X" ? "O" : myMark === "O" ? "X" : "—"}</b></span></div>}</div>
+    {invite && <div className="game-invite-banner"><span>🎮</span><div><strong>{invitedFriend?.fullName || "Your friend"} challenged you</strong><small>Join their Tic-tac-toe game</small></div><button onClick={() => join(invite.code)}>Join game</button></div>}
+    {!room && <div className="game-lobby"><label>Challenge a friend<select value={targetId} onChange={(event) => setTargetId(event.target.value)}><option value="">Choose from your circle</option>{contacts.filter((person) => person.connected || person.following).map((person) => <option key={person._id} value={person._id}>{person.fullName}</option>)}</select></label><button className="feature-primary" onClick={create}>Create game invite</button><div className="game-join-divider"><span>or join with a code</span></div><form onSubmit={(event) => { event.preventDefault(); join(); }}><input value={joinCode} onChange={(event) => setJoinCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="6-digit game code" inputMode="numeric"/><button className="feature-primary" disabled={joinCode.length !== 6}>Join</button></form></div>}
+    {room && <><div className="game-room-code"><span>ROOM CODE <b>{room.code}</b></span><button onClick={async () => { try { await navigator.clipboard.writeText(room.code); toast.success("Game code copied!"); } catch { toast.error("Couldn’t copy the code."); } }}>Copy code</button></div><div className="tic-tac-toe-board" role="grid" aria-label="Online Tic-tac-toe board">{room.board.map((mark, index) => <button key={index} role="gridcell" aria-label={`Square ${index + 1}${mark ? `, ${mark}` : ""}`} className={`tic-tac-toe-cell ${mark === "X" ? "mark-x" : "mark-o"}`} disabled={Boolean(mark || !isMyTurn || room.status !== "playing" || room.winner || room.draw)} onClick={() => play(index)}>{mark}</button>)}</div><div className="online-game-actions">{winnerText && <button className="feature-primary" onClick={() => socketAPI.emit("game:reset", { code: room.code })}>Play again</button>}<button className="game-leave" onClick={leave}>Leave game</button></div></>}
+    <small className="game-note">Only you and your connected friend can join this private game.</small>
+  </section>;
 }
 
 function TicTacToe() {

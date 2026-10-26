@@ -88,6 +88,7 @@ const mediaBucket = () => new mongoose.mongo.GridFSBucket(mongoose.connection.db
 const onlineSockets = new Map();
 const listeningRooms = new Map();
 const sharedActivities = new Map();
+const gameRooms = new Map();
 
 const createNotification = async ({ userId, actorId, type, text, meta = {} }) => {
   const notification = await Notification.create({ userId, actorId, type, text, meta });
@@ -143,6 +144,7 @@ const connectedUserIds = async (userId) => {
   ids.delete(String(userId));
   return [...ids];
 };
+const publicGameState = (game) => ({ code: game.code, board: [...game.board], players: [...game.players], invitedUserId: game.invitedUserId, turnUserId: game.turnUserId, winner: game.winner, draw: game.draw, status: game.status });
 const broadcastActivity = async (userId, activity) => {
   try {
     const friends = await connectedUserIds(userId);
@@ -761,6 +763,65 @@ io.on("connection", (socket) => {
   socket.on("call:reject", ({ to } = {}) => relayToFriend(to, "call:rejected", {}));
   socket.on("call:end", ({ to } = {}) => relayToFriend(to, "call:ended", {}));
   socket.on("call:busy", ({ to } = {}) => relayToFriend(to, "call:busy", {}));
+  socket.on("game:create", async ({ to } = {}, callback) => {
+    try {
+      const from = socket.data.userId;
+      if (!from || typeof callback !== "function" || !mongoose.isValidObjectId(to) || String(to) === from || !await areConnected(from, to)) return callback?.({ success: false, message: "Choose a connected friend to challenge." });
+      let code; do { code = String(randomInt(100000, 1000000)); } while (gameRooms.has(code));
+      const game = { code, createdBy: from, invitedUserId: String(to), players: [from], board: Array(9).fill(""), turnUserId: from, winner: null, draw: false, status: "waiting" };
+      gameRooms.set(code, game);
+      socket.join(`game:${code}`);
+      callback({ success: true, data: publicGameState(game) });
+      io.to(String(to)).emit("game:invite", { code, from });
+      setTimeout(() => { const current = gameRooms.get(code); if (current) { gameRooms.delete(code); io.to(`game:${code}`).emit("game:closed", { code, reason: "expired" }); io.in(`game:${code}`).socketsLeave(`game:${code}`); } }, 2 * 60 * 60 * 1000).unref?.();
+    } catch (error) { console.error("Game invite failed", error.message); callback?.({ success: false, message: "Couldn’t create a game. Try again." }); }
+  });
+  socket.on("game:join", async ({ code } = {}, callback) => {
+    try {
+      const normalized = String(code || "").replace(/\D/g, "").slice(0, 6);
+      const game = gameRooms.get(normalized); const userId = socket.data.userId;
+      if (!userId || !game || ![game.createdBy, game.invitedUserId].includes(userId) || !await areConnected(game.createdBy, userId)) return callback?.({ success: false, message: "That invite is invalid or is not for your account." });
+      if (!game.players.includes(userId) && game.players.length >= 2) return callback?.({ success: false, message: "This game already has two players." });
+      if (!game.players.includes(userId)) game.players.push(userId);
+      game.status = game.players.length === 2 ? "playing" : "waiting";
+      if (game.players.length === 2 && game.status === "playing" && !game.winner && !game.draw) game.turnUserId ||= game.players[0];
+      socket.join(`game:${normalized}`);
+      const state = publicGameState(game);
+      callback?.({ success: true, data: state });
+      io.to(`game:${normalized}`).emit("game:update", state);
+    } catch (error) { console.error("Game join failed", error.message); callback?.({ success: false, message: "Couldn’t join that game. Try again." }); }
+  });
+  socket.on("game:move", ({ code, index } = {}) => {
+    const normalized = String(code || "").replace(/\D/g, "").slice(0, 6); const game = gameRooms.get(normalized); const userId = socket.data.userId;
+    if (!game || !game.players.includes(userId) || game.players.length !== 2 || game.status !== "playing" || game.turnUserId !== userId || !Number.isInteger(index) || index < 0 || index > 8 || game.board[index] || game.winner || game.draw) return;
+    const mark = game.players[0] === userId ? "X" : "O";
+    game.board[index] = mark;
+    const lines = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+    game.winner = lines.some(([a,b,c]) => game.board[a] && game.board[a] === game.board[b] && game.board[a] === game.board[c]) ? mark : null;
+    game.draw = !game.winner && game.board.every(Boolean);
+    if (!game.winner && !game.draw) game.turnUserId = game.players.find((player) => player !== userId);
+    io.to(`game:${normalized}`).emit("game:update", publicGameState(game));
+  });
+  socket.on("game:reset", ({ code } = {}) => {
+    const normalized = String(code || "").replace(/\D/g, "").slice(0, 6); const game = gameRooms.get(normalized); const userId = socket.data.userId;
+    if (!game || !game.players.includes(userId) || game.players.length !== 2) return;
+    game.board = Array(9).fill(""); game.turnUserId = game.players[0]; game.winner = null; game.draw = false; game.status = "playing";
+    io.to(`game:${normalized}`).emit("game:update", publicGameState(game));
+  });
+  socket.on("game:leave", ({ code } = {}) => {
+    const normalized = String(code || "").replace(/\D/g, "").slice(0, 6); const game = gameRooms.get(normalized); const userId = socket.data.userId;
+    if (!game || !game.players.includes(userId)) return;
+    socket.leave(`game:${normalized}`);
+    if (game.createdBy === userId) {
+      gameRooms.delete(normalized);
+      io.to(`game:${normalized}`).emit("game:closed", { code: normalized, reason: "left" });
+      io.in(`game:${normalized}`).socketsLeave(`game:${normalized}`);
+      return;
+    }
+    game.players = game.players.filter((player) => player !== userId);
+    game.board = Array(9).fill(""); game.turnUserId = game.createdBy; game.winner = null; game.draw = false; game.status = "waiting";
+    io.to(`game:${normalized}`).emit("game:update", publicGameState(game));
+  });
   socket.on("music:sync", (payload = {}) => {
     const { to, ...event } = payload;
     relayToFriend(to, "music:sync", event);
