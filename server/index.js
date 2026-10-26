@@ -18,14 +18,15 @@ import { Server } from "socket.io";
 const app = express();
 const server = http.createServer(app);
 const configuredClient = process.env.CLIENT_URL || "http://localhost:5173";
+const capacitorOrigins = new Set(["https://localhost", "capacitor://localhost"]);
 const allowedOrigin = (origin, callback) => {
   const localNetworkOrigin = process.env.NODE_ENV !== "production" && /^http:\/\/(localhost|127\.0\.0\.1|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}):5173$/.test(origin || "");
-  if (!origin || origin === configuredClient || localNetworkOrigin) return callback(null, true);
+  if (!origin || origin === configuredClient || capacitorOrigins.has(origin) || localNetworkOrigin) return callback(null, true);
   callback(new Error("This app origin is not allowed by CORS."));
 };
-const io = new Server(server, process.env.NODE_ENV === "production" ? {} : { cors: { origin: allowedOrigin, credentials: true } });
+const io = new Server(server, { cors: { origin: allowedOrigin, credentials: true } });
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-if (process.env.NODE_ENV !== "production") app.use(cors({ origin: allowedOrigin, credentials: true }));
+app.use(cors({ origin: allowedOrigin, credentials: true }));
 app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
 
@@ -209,6 +210,7 @@ const fail = (res, status, message) => res.status(status).json({ success: false,
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 const sessionCookieName = "mingo_session";
 const tokenFor = (user) => jwt.sign({ id: user._id }, process.env.JWT_SECRET || "mingo-local-development-secret", { expiresIn: "30d" });
+const cookieOptionsFor = (req) => ({ httpOnly: true, sameSite: capacitorOrigins.has(req.get("origin")) ? "none" : "lax", secure: process.env.NODE_ENV === "production", path: "/" });
 const requireAuth = asyncRoute(async (req, res, next) => {
   const token = req.cookies[sessionCookieName];
   if (!token) return fail(res, 401, "Please sign in to continue.");
@@ -226,8 +228,8 @@ const requireAuth = asyncRoute(async (req, res, next) => {
   if (!req.user) return fail(res, 401, "Account not found. Please sign in again.");
   next();
 });
-const issueSession = (res, user) => {
-  const cookieOptions = { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/" };
+const issueSession = (req, res, user) => {
+  const cookieOptions = cookieOptionsFor(req);
   res.clearCookie("token", cookieOptions);
   res.cookie(sessionCookieName, tokenFor(user), { ...cookieOptions, maxAge: 30 * 24 * 60 * 60 * 1000 });
 };
@@ -310,22 +312,51 @@ app.post("/auth/register", asyncRoute(async (req, res) => {
   if (password.length < 8) return fail(res, 400, "Use a password with at least 8 characters.");
   if (await User.exists({ email: email.toLowerCase().trim() })) return fail(res, 409, "An account with that email already exists.");
   const user = await User.create({ fullName: fullName.trim(), email: email.toLowerCase().trim(), mobileNumber, password: await bcrypt.hash(password, 12) });
-  issueSession(res, user);
+  issueSession(req, res, user);
   res.status(201).json({ success: true, message: "Your Mingo account is ready!", data: publicUser(user) });
 }));
 app.post("/auth/login", asyncRoute(async (req, res) => {
   const user = await User.findOne({ email: req.body.email?.toLowerCase().trim() });
   if (!user || !await bcrypt.compare(req.body.password || "", user.password)) return fail(res, 401, "Email or password is incorrect.");
-  issueSession(res, user);
+  issueSession(req, res, user);
   res.json({ success: true, message: "Welcome back!", data: publicUser(user) });
 }));
-app.post("/auth/logout", (_req, res) => {
-  const cookieOptions = { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/" };
+app.post("/auth/logout", (req, res) => {
+  const cookieOptions = cookieOptionsFor(req);
   res.clearCookie(sessionCookieName, cookieOptions);
   res.clearCookie("token", cookieOptions);
   res.json({ success: true });
 });
 app.get("/auth/me", requireAuth, (req, res) => res.json({ data: publicUser(req.user) }));
+
+app.delete("/user/account", requireAuth, asyncRoute(async (req, res) => {
+  if (!req.body?.password || !await bcrypt.compare(req.body.password, req.user.password)) return fail(res, 401, "Enter your current password to delete your account.");
+  const userId = req.user._id;
+  const ownedGroups = await Group.find({ createdBy: userId }).select("_id").lean();
+  const groupIds = ownedGroups.map((group) => group._id);
+  const messageFilter = { $or: [{ senderId: userId }, { receiverId: userId }, ...(groupIds.length ? [{ groupId: { $in: groupIds } }] : [])] };
+  const [messages] = await Promise.all([
+    Message.find(messageFilter).select("mediaUrl").lean(),
+  ]);
+  const mediaIds = new Set([req.user.avatar, ...messages.map((message) => message.mediaUrl)].flatMap((url) => [...String(url || "").matchAll(/\/user\/(?:avatar|media)\/([a-f\d]{24})/gi)].map((match) => match[1])));
+  await Promise.all([
+    Message.deleteMany(messageFilter),
+    Group.deleteMany({ _id: { $in: groupIds } }),
+    Group.updateMany({ members: userId }, { $pull: { members: userId } }),
+    FollowRequest.deleteMany({ $or: [{ from: userId }, { to: userId }] }),
+    Notification.deleteMany({ $or: [{ userId }, { actorId: userId }] }),
+    InstagramReel.deleteMany({ userId }), Story.deleteMany({ userId }), StudyNote.deleteMany({ userId }), MemoryItem.deleteMany({ userId }), ListeningRoom.deleteMany({ owner: userId }),
+    User.updateMany({ _id: { $ne: userId } }, { $pull: { following: userId } }),
+  ]);
+  await User.deleteOne({ _id: userId });
+  for (const mediaId of mediaIds) {
+    try { await mediaBucket().delete(new mongoose.Types.ObjectId(mediaId)); }
+    catch (error) { console.error("Could not remove media during account deletion", error.message); }
+  }
+  io.in(String(userId)).disconnectSockets(true);
+  res.clearCookie(sessionCookieName, cookieOptionsFor(req));
+  res.json({ success: true, message: "Your Mingo account and associated data have been deleted." });
+}));
 
 app.put("/user/profile", requireAuth, asyncRoute(async (req, res) => {
   const fullName = req.body.fullName?.trim(); const email = req.body.email?.toLowerCase().trim();

@@ -3,6 +3,7 @@ import { useAuth } from "../context/AuthContext";
 import api, { assetUrl } from "../config/api";
 import { useNavigate } from "react-router-dom";
 import { FiCamera, FiUsers, FiHeart } from "react-icons/fi";
+import { Link } from "react-router-dom";
 
 const UserDashboard = () => {
   const { user, isLogin, setUser, setIsLogin } = useAuth();
@@ -13,6 +14,8 @@ const UserDashboard = () => {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [avatarBusy, setAvatarBusy] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const [followStats, setFollowStats] = useState({ followers: 0, following: 0 });
   const [formData, setFormData] = useState(() => ({
     fullName: user?.fullName || "",
@@ -110,6 +113,16 @@ const UserDashboard = () => {
     navigate("/login");
   };
 
+  const deleteAccount = async () => {
+    if (!deletePassword || !window.confirm("Delete your Mingo account and its associated data permanently?")) return;
+    setDeletingAccount(true); setError("");
+    try {
+      await api.delete("/user/account", { data: { password: deletePassword } });
+      sessionStorage.removeItem("AppUser"); setUser(null); setIsLogin(false); navigate("/", { replace: true });
+    } catch (err) { setError(err.response?.data?.message || "Couldn't delete your account. Please try again."); }
+    finally { setDeletingAccount(false); }
+  };
+
   return (
     <div className="container mx-auto mt-10 mb-10 max-w-2xl px-4 profile-page">
       <h1 className="text-4xl font-bold mb-8 text-center">User Dashboard</h1>
@@ -172,6 +185,13 @@ const UserDashboard = () => {
               Logout
             </button>
           </div>
+          <section className="account-delete-box" aria-labelledby="delete-account-title">
+            <h3 id="delete-account-title">Delete account</h3>
+            <p>This permanently removes your Mingo profile and associated account data. Enter your password to continue.</p>
+            <input type="password" autoComplete="current-password" value={deletePassword} onChange={(event) => setDeletePassword(event.target.value)} className="input input-bordered w-full" placeholder="Current password" aria-label="Current password" />
+            <button onClick={deleteAccount} disabled={!deletePassword || deletingAccount} className="btn btn-error btn-outline w-full">{deletingAccount ? "Deleting account…" : "Delete my account"}</button>
+          </section>
+          <p className="profile-privacy-link"><Link to="/privacy">Mingo Privacy Policy</Link></p>
         </div>
       ) : (
         <div className="card bg-base-100 shadow-lg p-8">

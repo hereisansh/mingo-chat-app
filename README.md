@@ -47,3 +47,19 @@ The repository includes `render.yaml` as a Render Blueprint. Push this project f
 In MongoDB Atlas, create a database user and a database named `mingo`, then copy the Node.js connection string and replace its password placeholder with that database user's password. Add Render's outbound IP ranges to the Atlas Network Access allowlist before deploying. Keep database passwords and API keys in Render's Environment settings; never commit `.env` files. To run locally, copy `server/.env.example` to `server/.env` and `client/.env.example` to `client/.env`, then set a real MongoDB URL and a long random JWT secret in the server file.
 
 For local development, keep `client/.env` pointed to `http://localhost:4500` and set `MONGO_URL` in `server/.env`. Never put database credentials or JWT secrets in GitHub.
+
+## Android and Google Play
+
+Mingo has a Capacitor Android project in `client/android`. Its Play package ID is `com.hereisansh.mingo`, and the Android target SDK is API 36. The mobile shell calls the existing HTTPS service at `https://mingo-chat-app-o15s.onrender.com`; its web bundle is built locally into the Android project.
+
+### Build the Android project
+
+1. Install Android Studio and Android SDK Platform 36, then open `client/android` in Android Studio and let Gradle sync.
+2. From the repository root, run `cd client` and `npm ci` once.
+3. Run `npm run build:android` whenever the web app changes. This builds the web bundle and copies it into the Android project.
+4. In Android Studio, choose **Build > Generate Signed Bundle / APK > Android App Bundle**. Create and safely back up an upload key, then generate the signed release `.aab`.
+5. Upload the `.aab` in Google Play Console. Keep the upload key private and backed up.
+
+The app uses camera and microphone for calls and network access for chat. The Android project declares these permissions. The privacy policy is available at `/privacy`; account deletion is in the signed-in profile dashboard.
+
+New personal Play Console accounts created after November 13, 2023 must first run a closed test with at least 12 opted-in testers for 14 continuous days before applying for production access. Play Console account verification, store listing, content rating, Data safety answers, screenshots, reviewer login credentials, and final submission must be completed in the account owner’s Play Console.

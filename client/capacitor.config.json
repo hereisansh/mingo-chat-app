@@ -1,0 +1,7 @@
+{
+  "appId": "com.hereisansh.mingo",
+  "appName": "Mingo",
+  "webDir": "dist",
+  "backgroundColor": "#10131c",
+  "android": { "allowMixedContent": false }
+}

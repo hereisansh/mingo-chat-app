@@ -7,6 +7,7 @@ import Register from "./pages/Register";
 import Chat from "./pages/Chat";
 import ContactUs from "./pages/Contactus";
 import UserDashboard from "./pages/UserDashboard";
+import PrivacyPolicy from "./pages/PrivacyPolicy";
 
 const App = () => {
   const path = useLocation().pathname;
@@ -21,6 +22,7 @@ const App = () => {
         <Route path="/chat" element={<Chat />} />
         <Route path="/contact" element={<ContactUs />} />
         <Route path="/dashboard" element={<UserDashboard />} />
+        <Route path="/privacy" element={<PrivacyPolicy />} />
       </Routes>
     </>
   );
