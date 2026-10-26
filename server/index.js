@@ -87,6 +87,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 
 const mediaBucket = () => new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: "media" });
 const onlineSockets = new Map();
 const listeningRooms = new Map();
+const sharedActivities = new Map();
 
 const createNotification = async ({ userId, actorId, type, text, meta = {} }) => {
   const notification = await Notification.create({ userId, actorId, type, text, meta });
@@ -116,6 +117,8 @@ const leavePresence = (socket, userId = socket.data.userId) => {
   if (count) onlineSockets.set(String(userId), count);
   else {
     onlineSockets.delete(String(userId));
+    sharedActivities.delete(String(userId));
+    broadcastActivity(String(userId), null);
     const lastSeen = new Date();
     User.findByIdAndUpdate(userId, { lastSeen }).catch((error) => console.error("Could not save last seen", error.message));
     io.emit("presence:update", { userId: String(userId), online: false, lastSeen });
@@ -127,6 +130,33 @@ const areConnected = async (firstId, secondId) => Boolean(await FollowRequest.ex
   status: "accepted",
   $or: [{ from: firstId, to: secondId }, { from: secondId, to: firstId }],
 }) || await User.exists({ _id: firstId, following: secondId }) || await User.exists({ _id: secondId, following: firstId }));
+const connectedUserIds = async (userId) => {
+  const [requests, ownUser, followers] = await Promise.all([
+    FollowRequest.find({ status: "accepted", $or: [{ from: userId }, { to: userId }] }).select("from to").lean(),
+    User.findById(userId).select("following").lean(),
+    User.find({ following: userId }).select("_id").lean(),
+  ]);
+  const ids = new Set();
+  requests.forEach(({ from, to }) => { ids.add(String(from)); ids.add(String(to)); });
+  (ownUser?.following || []).forEach((id) => ids.add(String(id)));
+  followers.forEach(({ _id }) => ids.add(String(_id)));
+  ids.delete(String(userId));
+  return [...ids];
+};
+const broadcastActivity = async (userId, activity) => {
+  try {
+    const friends = await connectedUserIds(userId);
+    friends.forEach((friendId) => io.to(friendId).emit("activity:update", { userId: String(userId), activity: activity || null }));
+  } catch (error) { console.error("Activity sharing update failed", error.message); }
+};
+const syncActivitiesFor = async (socket) => {
+  try {
+    const friends = await connectedUserIds(socket.data.userId);
+    friends.forEach((friendId) => {
+      if (sharedActivities.has(friendId)) socket.emit("activity:update", { userId: friendId, activity: sharedActivities.get(friendId) });
+    });
+  } catch (error) { console.error("Activity sharing sync failed", error.message); }
+};
 const requireConnection = async (firstId, secondId) => {
   if (String(firstId) === String(secondId) || !await areConnected(firstId, secondId)) {
     const error = new Error("You can chat or call only after the follow request is accepted.");
@@ -670,6 +700,21 @@ io.on("connection", (socket) => {
     if (count === 0) io.emit("presence:update", { userId: id, online: true, lastSeen: null });
   });
   socket.on("OmNamahShivay", (userId) => { if (String(userId) === socket.data.userId) leavePresence(socket, userId); });
+  socket.on("activity:sync", () => { if (socket.data.userId) syncActivitiesFor(socket); });
+  socket.on("activity:share", ({ enabled } = {}) => {
+    if (!socket.data.userId) return;
+    if (!enabled) { sharedActivities.delete(socket.data.userId); broadcastActivity(socket.data.userId, null); return; }
+    sharedActivities.set(socket.data.userId, socket.data.activity || null);
+    broadcastActivity(socket.data.userId, socket.data.activity || null);
+  });
+  socket.on("activity:set", ({ activity } = {}) => {
+    if (!socket.data.userId || !sharedActivities.has(socket.data.userId)) return;
+    const allowed = new Set(["reels", "music", "games", "study", "stories"]);
+    const safeActivity = allowed.has(activity) ? activity : null;
+    socket.data.activity = safeActivity;
+    sharedActivities.set(socket.data.userId, safeActivity);
+    broadcastActivity(socket.data.userId, safeActivity);
+  });
   socket.on("send", async (payload) => {
     try {
       if (!socket.data.userId || !payload?._id) return;

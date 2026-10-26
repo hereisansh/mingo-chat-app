@@ -24,6 +24,7 @@ const relativeTime = (date) => {
   return days < 7 ? `${days}d ago` : new Date(date).toLocaleDateString();
 };
 const presenceText = (person) => person.online ? "online" : person.lastSeen ? `last seen ${relativeTime(person.lastSeen)}` : "offline";
+const activityLabels = { reels: "Watching Reels", music: "Listening to music", games: "Playing games", study: "Studying", stories: "Viewing Stories" };
 
 export default function Chat() {
   const navigate = useNavigate();
@@ -47,7 +48,9 @@ export default function Chat() {
   const [groupMembers, setGroupMembers] = useState([]);
   const [mobileList, setMobileList] = useState(!location.state?.conversation && !location.state?.featureTab);
   const [activeTab, setActiveTab] = useState(location.state?.featureTab || "chats");
+  const [shareActivity, setShareActivity] = useState(false);
   const scrollRef = useRef(null);
+  const friendActivitiesRef = useRef(new Map());
   const fileRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const localVideoRef = useRef(null);
@@ -72,13 +75,14 @@ export default function Chat() {
 
   useEffect(() => {
     if (!user) { navigate("/login", { replace: true }); return undefined; }
+    setShareActivity(localStorage.getItem(`mingoShareActivity:${user._id}`) === "true");
     api.get("/memory/settings").then(({ data }) => setMemoryEnabled(Boolean(data.data?.enabled))).catch(() => {});
     api.get("/memory/items").then(({ data }) => {
       const savedIds = (data.data || []).filter((item) => item.sourceType === "message").map((item) => String(item.sourceId));
       setSavedMemories(new Set(savedIds));
     }).catch(() => {});
     api.get("/user/allusers").then(({ data }) => {
-      const people = data.data || [];
+      const people = (data.data || []).map((person) => ({ ...person, activity: friendActivitiesRef.current.get(String(person._id)) || null }));
       setContacts(people);
       if (people.length) setSelected((current) => current || people[0]);
     }).catch((error) => toast.error(error.response?.data?.message || "Couldn't reach the server. Check your connection and try again."))
@@ -92,7 +96,7 @@ export default function Chat() {
     socketAPI.on("group:created", onGroupCreated);
     socketAPI.on("group:message", onGroupMessage);
     const refreshPeople = () => api.get("/user/allusers").then(({ data }) => {
-      const people = data.data || []; const friendIds = new Set(people.map((person) => String(person._id)));
+      const people = (data.data || []).map((person) => ({ ...person, activity: friendActivitiesRef.current.get(String(person._id)) || null })); const friendIds = new Set(people.map((person) => String(person._id)));
       setContacts(people); setSearchResults((results) => results.filter((person) => !friendIds.has(String(person._id))));
     }).catch(() => {});
     window.addEventListener("mingo:people-changed", refreshPeople);
@@ -102,11 +106,31 @@ export default function Chat() {
       setContacts((people) => people.map((person) => String(person._id) === String(userId) ? { ...person, ...presence } : person));
       setSelected((person) => person && String(person._id) === String(userId) ? { ...person, ...presence } : person);
     };
+    const updateActivity = ({ userId, activity }) => {
+      friendActivitiesRef.current.set(String(userId), activity || null);
+      const update = (person) => String(person._id) === String(userId) ? { ...person, activity: activity || null } : person;
+      setContacts((people) => people.map(update));
+      setSelected((person) => person ? update(person) : person);
+    };
     socketAPI.on("connect", joinRoom);
     socketAPI.on("presence:update", updatePresence);
+    socketAPI.on("activity:update", updateActivity);
     if (socketAPI.connected) joinRoom();
-    return () => { window.removeEventListener("mingo:people-changed", refreshPeople); socketAPI.off("connect", joinRoom); socketAPI.off("presence:update", updatePresence); socketAPI.off("group:created", onGroupCreated); socketAPI.off("group:message", onGroupMessage); socketAPI.emit("OmNamahShivay", user._id); };
+    return () => { window.removeEventListener("mingo:people-changed", refreshPeople); socketAPI.off("connect", joinRoom); socketAPI.off("presence:update", updatePresence); socketAPI.off("activity:update", updateActivity); socketAPI.off("group:created", onGroupCreated); socketAPI.off("group:message", onGroupMessage); socketAPI.emit("OmNamahShivay", user._id); };
   }, [user, navigate]);
+
+  useEffect(() => {
+    if (!user?._id) return undefined;
+    localStorage.setItem(`mingoShareActivity:${user._id}`, String(shareActivity));
+    const syncActivity = () => {
+      socketAPI.emit("activity:share", { enabled: shareActivity });
+      socketAPI.emit("activity:set", { activity: shareActivity && activeTab !== "chats" ? activeTab : null });
+      socketAPI.emit("activity:sync");
+    };
+    if (socketAPI.connected) syncActivity();
+    socketAPI.on("connect", syncActivity);
+    return () => socketAPI.off("connect", syncActivity);
+  }, [user?._id, activeTab, shareActivity]);
 
   useEffect(() => {
     if (!selected?._id) return undefined;
@@ -239,19 +263,20 @@ export default function Chat() {
         const last = person.lastMessage;
         return <div className="person-row-wrap" key={person._id}><button className={`person-row ${active ? "person-active" : ""}`} onClick={() => openContact(person)}>
           <div className="avatar person-avatar" style={{ "--avatar-color": palette[index % palette.length] }}>{person.avatar ? <img src={assetUrl(person.avatar)} alt="" /> : initials(person.fullName)}</div>
-          <div className="person-copy"><div className="person-name-line"><strong>{person.fullName}</strong><time>{stamp(last?.createdAt)}</time></div><div className="person-preview">{last?.message || "Say hello and start a conversation ✨"}</div></div>
+          <div className="person-copy"><div className="person-name-line"><strong>{person.fullName}</strong><time>{stamp(last?.createdAt)}</time></div><div className="person-preview">{last?.message || "Say hello and start a conversation ✨"}</div>{person.activity && <div className="friend-activity"><i/> {activityLabels[person.activity] || "Active in Mingo"}</div>}</div>
           <span className={`person-last-seen ${person.online ? "presence-online" : ""}`}>{presenceText(person)}</span>
           {person.online && <i className="person-online" />}
         </button><button type="button" className={`person-follow ${person.connected || person.following || person.followRequested ? "is-following" : ""}`} disabled={person.connected} title={person.connected ? "Connected — you can chat" : person.following ? "Unfollow" : person.followRequested ? "Cancel follow request" : "Send follow request"} aria-label={`${person.connected ? "Connected to" : person.following ? "Unfollow" : person.followRequested ? "Cancel request to" : "Request to follow"} ${person.fullName}`} onClick={() => toggleFollow(person)}>{person.connected || person.following || person.followRequested ? <FiUserCheck/> : <FiUserPlus/>}<span>{person.connected ? "Friends" : person.following ? "Following" : person.followRequested ? "Requested" : "Follow"}</span></button></div>;
       }) : !groups.length && <div className="list-empty">{contacts.length ? "No connected friends match yet." : "Your chats are private. Search for your person above, send a follow request, and chat after they accept."}</div>}</>}</div>
       {query.trim().length >= 2 && <section className="people-search-results"><div className="search-results-heading"><strong>Find people</strong><span>{searchingPeople ? "Searching…" : `${searchResults.length} results`}</span></div>{searchResults.length ? searchResults.map((person) => <article className="directory-person" key={person._id}><div className="avatar directory-avatar">{person.avatar ? <img src={assetUrl(person.avatar)} alt=""/> : initials(person.fullName)}</div><div className="directory-copy"><strong>{person.fullName}</strong><small>{person.requestReceived ? "Sent you a request · check your bell" : person.followRequested ? "Request sent · waiting for them" : "Not in your circle yet"}</small></div><button type="button" disabled={person.followRequested || person.requestReceived} onClick={() => toggleFollow({ ...person, following: false })}>{person.requestReceived ? "Check bell" : person.followRequested ? "Requested" : <><FiUserPlus/> Add</>}</button></article>) : !searchingPeople && <p className="search-results-empty">No new people found. Try another name.</p>}</section>}
+      <label className="activity-share-control"><span className="activity-share-orb">✦</span><span className="activity-share-copy"><strong>Share my activity</strong><small>{shareActivity ? "Connected friends can see your space" : "Only share when you choose"}</small></span><input type="checkbox" checked={shareActivity} onChange={(event) => setShareActivity(event.target.checked)} aria-label="Share my activity with connected friends"/><i className="activity-toggle-track"/></label>
       <div className="sidebar-note"><div className="note-icon">♡</div><div><strong>Your favorite people</strong><span>All the little moments, in one place.</span></div></div>
       <div className="sidebar-footer"><span>MADE FOR YOUR EVERYDAY</span><span>♡ &nbsp; mingo</span></div>
     </aside>
 
     <section className={`conversation-panel ${mobileList ? "mobile-hidden" : ""}`}>
       {activeTab !== "chats" ? <><button className="feature-mobile-back" onClick={backToPeople}>‹ <span>Back to Mingo</span></button><FeatureHub tab={activeTab} user={user} contacts={contacts} selected={selected}/></> : selected ? <>
-        <header className="conversation-header"><button className="back-button" onClick={backToPeople}>‹</button><div className="avatar header-avatar" style={{ "--avatar-color": palette[Math.max(0, contacts.indexOf(selected)) % palette.length] }}>{selected.isGroup ? <FiUsers/> : selected.avatar ? <img src={assetUrl(selected.avatar)} alt=""/> : initials(selected.fullName)}</div><div className="header-person"><strong>{selected.isGroup ? selected.name : selected.fullName}</strong><span>{selected.isGroup ? `${selected.members?.length || 0} members` : selected.online ? <><i className="online-dot" /> online</> : presenceText(selected)}</span></div><div className="header-actions">{!selected.isGroup && <><button className="icon-button" title="Voice call" disabled={!!call} onClick={() => startCall(selected, "audio")}><FiPhone /></button><button className="icon-button" title="Video call" disabled={!!call} onClick={() => startCall(selected, "video")}><FiVideo /></button></>}<span className="header-divider" /><button className="icon-button" title="Conversation options"><FiMoreVertical /></button></div></header>
+        <header className="conversation-header"><button className="back-button" onClick={backToPeople}>‹</button><div className="avatar header-avatar" style={{ "--avatar-color": palette[Math.max(0, contacts.indexOf(selected)) % palette.length] }}>{selected.isGroup ? <FiUsers/> : selected.avatar ? <img src={assetUrl(selected.avatar)} alt=""/> : initials(selected.fullName)}</div><div className="header-person"><strong>{selected.isGroup ? selected.name : selected.fullName}</strong><span>{selected.isGroup ? `${selected.members?.length || 0} members` : selected.online ? <><i className="online-dot" /> online{selected.activity && <> · <b className="header-activity">{activityLabels[selected.activity]}</b></>}</> : presenceText(selected)}</span></div><div className="header-actions">{!selected.isGroup && <><button className="icon-button" title="Voice call" disabled={!!call} onClick={() => startCall(selected, "audio")}><FiPhone /></button><button className="icon-button" title="Video call" disabled={!!call} onClick={() => startCall(selected, "video")}><FiVideo /></button></>}<span className="header-divider" /><button className="icon-button" title="Conversation options"><FiMoreVertical /></button></div></header>
         <div className="conversation-scroll" ref={scrollRef}>
           <div className="chat-date"><span /> <small>YOUR LITTLE CORNER OF THE INTERNET</small> <span /></div>
           <div className="welcome-card"><div className="welcome-sparkle">✳</div><div className="welcome-title">A good day to say hi.</div><p>{selected.isGroup ? `This is the beginning of ${selected.name}.` : `This is the beginning of your story with ${selected.fullName.split(" ")[0]}.`}</p><div className="welcome-reaction">♡ &nbsp; make it a lovely one</div></div>

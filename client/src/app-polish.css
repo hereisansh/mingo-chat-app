@@ -141,3 +141,21 @@ body{background:var(--theme-bg);color:var(--theme-text);transition:background .2
 :root[data-theme="futuristic"] .memory-card,:root[data-theme="futuristic"] .mini-game-card,:root[data-theme="futuristic"] .music-track-card,:root[data-theme="futuristic"] .listening-room-card{box-shadow:0 12px 34px #05081466}
 :root[data-theme="futuristic"] .site-theme-select{border-color:#34446c;border-radius:10px}
 :root[data-theme="futuristic"] ::selection{background:#8276f477;color:#fff}
+
+/* Friend activity sharing */
+.activity-share-control{display:flex;align-items:center;gap:9px;margin-top:10px;padding:10px;border:1px solid var(--theme-line);border-radius:13px;background:var(--theme-panel-soft);color:var(--theme-text);cursor:pointer;transition:border-color .18s,transform .18s}
+.activity-share-control:hover{border-color:var(--theme-accent);transform:translateY(-1px)}
+.activity-share-orb{width:28px;height:28px;display:grid;place-items:center;border-radius:9px;background:var(--theme-accent-soft);color:var(--theme-accent);font-size:13px}
+.activity-share-copy{display:grid;gap:3px;flex:1;min-width:0}
+.activity-share-copy strong{font-size:9px}
+.activity-share-copy small{font-size:7px;color:var(--theme-muted)}
+.activity-share-control input{position:absolute;opacity:0;width:1px;height:1px}
+.activity-toggle-track{position:relative;width:30px;height:18px;flex:0 0 auto;border-radius:20px;background:#8e929c;transition:background .2s}
+.activity-toggle-track:after{content:"";position:absolute;top:3px;left:3px;width:12px;height:12px;border-radius:50%;background:#fff;transition:transform .2s}
+.activity-share-control input:checked+.activity-toggle-track{background:var(--theme-accent)}
+.activity-share-control input:checked+.activity-toggle-track:after{transform:translateX(12px)}
+.activity-share-control input:focus-visible+.activity-toggle-track{outline:2px solid var(--theme-accent);outline-offset:3px}
+.friend-activity{display:flex;align-items:center;gap:5px;margin-top:4px;color:var(--theme-accent);font-size:8px;font-weight:700}
+.friend-activity i{width:6px;height:6px;border-radius:50%;background:#65c99b;box-shadow:0 0 0 3px color-mix(in srgb,#65c99b 17%,transparent)}
+.header-activity{color:var(--theme-accent);font-size:9px;font-weight:700}
+:root[data-theme="futuristic"] .activity-share-control{background:linear-gradient(110deg,#18213b,#141a30);border-color:#34446c}
